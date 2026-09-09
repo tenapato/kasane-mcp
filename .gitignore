@@ -1,0 +1,17 @@
+.env
+node_modules/
+web/dist/
+bin/
+/kasane
+cookies.txt
+session.json
+*.dump
+*.backup
+.cache/
+*.log
+.DS_Store
+web/
+Dockerfile.web
+compose.web.yaml
+docs/implementation.md
+docs/store-contract.md

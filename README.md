@@ -1,0 +1,118 @@
+# Kasane MCP
+
+Kasane is a self-hosted memory service for AI agents. PostgreSQL is the source of truth. Qdrant provides sparse keyword search, with indexing handled in the background. The Go binary exposes the HTTP API and remote MCP endpoint. A separately distributed private web UI can be served by setting `WEB_DIR`.
+
+## Quick start
+
+Install Docker Compose (`curl` and `jq` are also used by the API provisioning example), then create a local environment file:
+
+```sh
+cp .env.example .env
+```
+
+Replace the sample values with your own secrets. Compose passes `POSTGRES_PASSWORD` separately from the connection URL, so reserved characters such as `/`, `@`, and `:` work without URL encoding. Single-quote values containing `$` in `.env` to prevent Compose interpolation. Start the stack:
+
+```sh
+docker compose up --build -d
+```
+
+This command builds Kasane and starts PostgreSQL and Qdrant too. Compose sets `DATABASE_URL` and `QDRANT_URL` for the app, and Kasane applies database migrations on startup. You do not need Go installed or separate database installations. Both databases keep their data in named Docker volumes and are accessible only within the Compose network.
+
+Create the first owner. Enter the password without putting it in shell history, pass it only to the one-shot container command, then clear it:
+
+```sh
+printf 'Admin password: '; read -r -s KASANE_ADMIN_PASSWORD; printf '\n'
+export KASANE_ADMIN_PASSWORD
+docker compose exec -e KASANE_ADMIN_PASSWORD app \
+  kasane bootstrap --username owner
+```
+
+`/healthz` is public. `/readyz` reports PostgreSQL readiness. Stop the services with `docker compose down`; named Postgres and Qdrant volumes keep data.
+
+Create a workspace and an agent key through the API. The key token is returned once, so store it in your secret manager:
+
+```sh
+BASE_URL=http://localhost:8080
+umask 077
+jq -n '{username:"owner",password:env.KASANE_ADMIN_PASSWORD}' | \
+  curl -fsS -c cookies.txt -H "Origin: $BASE_URL" -H 'Content-Type: application/json' \
+  --data-binary @- "$BASE_URL/api/v1/login" > session.json
+CSRF_TOKEN=$(jq -r .csrf_token session.json)
+WORKSPACE_ID=$(curl -sS -b cookies.txt -H "Origin: $BASE_URL" \
+  -H "X-CSRF-Token: $CSRF_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"default"}' "$BASE_URL/api/v1/workspaces" | jq -r .id)
+curl -sS -b cookies.txt -H "Origin: $BASE_URL" \
+  -H "X-CSRF-Token: $CSRF_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"agent","scope":"write"}' \
+  "$BASE_URL/api/v1/workspaces/$WORKSPACE_ID/keys" | jq
+```
+
+Use the returned `token` as `KASANE_MCP_TOKEN`. Keep `session.json` and `cookies.txt` private and remove them after provisioning, then run `unset KASANE_ADMIN_PASSWORD`.
+
+## Run Go directly (optional development setup)
+
+Skip this section when using Docker Compose. To run the Go process outside Docker, provide PostgreSQL and Qdrant instances reachable from your host, set `DATABASE_URL` and `QDRANT_URL`, then run:
+
+```sh
+go run ./cmd/kasane migrate
+go run ./cmd/kasane serve
+```
+
+`serve` also applies migrations automatically; the separate `migrate` command is available when you want to run migrations without starting the server. The bundled Compose databases do not publish host ports by default.
+
+Useful commands are `kasane migrate`, `kasane bootstrap --username NAME`, and `kasane reindex [--workspace UUID]`. The server defaults to `LISTEN_ADDR=:8080`. Set `PUBLIC_URL` to the browser-visible URL. HTTPS is required except for loopback development URLs. HTTPS mode uses secure session cookies. Set `TRUSTED_PROXY_CIDRS` only for proxy networks you control.
+
+## Connect an agent
+
+Create a write or read key through the API or private UI. The token is displayed once. The MCP endpoint is:
+
+```text
+https://kasane.example.com/mcp
+```
+
+Claude Code supports remote HTTP MCP servers with a bearer header:
+
+```sh
+claude mcp add --transport http kasane https://kasane.example.com/mcp \
+  --header "Authorization: Bearer $KASANE_MCP_TOKEN"
+```
+
+Codex CLI uses `bearer_token_env_var` in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.kasane]
+url = "https://kasane.example.com/mcp"
+bearer_token_env_var = "KASANE_MCP_TOKEN"
+```
+
+Export `KASANE_MCP_TOKEN` before starting either client. These examples use a static bearer token. Kasane does not provide OAuth. Keep tokens out of committed config files.
+
+The MCP tools are `kasane_remember`, `kasane_search`, `kasane_get`, `kasane_context`, `kasane_forget`, and `kasane_profile`. Keys select the workspace, so clients do not send a workspace ID. See [`docs/api.md`](docs/api.md) for request fields and response shapes.
+
+## Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | required | PostgreSQL connection string |
+| `PGUSER`, `PGPASSWORD`, `PGDATABASE` | set by Compose | PostgreSQL credentials and database when omitted from `DATABASE_URL` |
+| `QDRANT_URL` | `http://localhost:6333` | Qdrant REST HTTP endpoint, `http://qdrant:6333` in Compose |
+| `QDRANT_API_KEY` | empty | Optional Qdrant API key |
+| `PUBLIC_URL` | `http://localhost:8080` | Public URL and cookie security mode |
+| `LISTEN_ADDR` | `:8080` | HTTP listen address |
+| `TRUSTED_PROXY_CIDRS` | empty | CIDRs allowed to provide proxy headers |
+| `WEB_DIR` | empty | Optional directory containing the private web UI |
+| `KASANE_ADMIN_PASSWORD` | empty | Bootstrap password from environment |
+| `KASANE_ADMIN_PASSWORD_FILE` | empty | File containing bootstrap password |
+
+## Development
+
+```sh
+make test
+make vet
+```
+
+Integration tests use `KASANE_TEST_DATABASE_URL` and `KASANE_TEST_QDRANT_URL`. Keep test data isolated from development data. Read [`docs/api.md`](docs/api.md) for the HTTP contract, memory model, indexing behavior, and profile kinds (`memory`, `stack`, `practice`).
+
+In production, put an HTTPS reverse proxy in front of Kasane and set `PUBLIC_URL` to the exact public origin. The proxy must preserve the `Host` header so it matches `PUBLIC_URL`. Set `TRUSTED_PROXY_CIDRS` only to the proxy's network ranges when you need client-IP handling from `X-Forwarded-For`.
+
+Contributions and vulnerability reports are covered by [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`SECURITY.md`](SECURITY.md). Kasane's public MCP/backend code is released under the [MIT License](LICENSE).

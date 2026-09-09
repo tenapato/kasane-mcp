@@ -1,0 +1,32 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.6-alpine
+        env:
+          POSTGRES_USER: kasane
+          POSTGRES_PASSWORD: kasane-ci
+          POSTGRES_DB: kasane
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U kasane -d kasane"
+          --health-interval=5s --health-timeout=5s --health-retries=12
+      qdrant:
+        image: qdrant/qdrant:v1.19.1
+        ports: ["6333:6333"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - run: go test ./...
+        env:
+          KASANE_TEST_DATABASE_URL: postgres://kasane:kasane-ci@localhost:5432/kasane?sslmode=disable
+          KASANE_TEST_QDRANT_URL: http://localhost:6333
+      - run: go vet ./...
