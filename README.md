@@ -97,6 +97,7 @@ The MCP tools are `kasane_remember`, `kasane_search`, `kasane_get`, `kasane_cont
 | `PGUSER`, `PGPASSWORD`, `PGDATABASE` | set by Compose | PostgreSQL credentials and database when omitted from `DATABASE_URL` |
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant REST HTTP endpoint, `http://qdrant:6333` in Compose |
 | `QDRANT_API_KEY` | empty | Optional Qdrant API key |
+| `MCP_PUBLIC_URL` | same as `PUBLIC_URL` | Optional dedicated MCP origin; endpoint is this origin plus `/mcp` |
 | `PUBLIC_URL` | `http://localhost:8080` | Public URL and cookie security mode |
 | `LISTEN_ADDR` | `:8080` | HTTP listen address |
 | `TRUSTED_PROXY_CIDRS` | empty | CIDRs allowed to provide proxy headers |
@@ -116,3 +117,16 @@ Integration tests use `KASANE_TEST_DATABASE_URL` and `KASANE_TEST_QDRANT_URL`. K
 In production, put an HTTPS reverse proxy in front of Kasane and set `PUBLIC_URL` to the exact public origin. The proxy must preserve the `Host` header so it matches `PUBLIC_URL`. Set `TRUSTED_PROXY_CIDRS` only to the proxy's network ranges when you need client-IP handling from `X-Forwarded-For`.
 
 Contributions and vulnerability reports are covered by [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`SECURITY.md`](SECURITY.md). Kasane's public MCP/backend code is released under the [MIT License](LICENSE).
+
+## Separate MCP hostname
+
+To use a dedicated hostname, set these origins in your `.env` (replace the example domain):
+
+```dotenv
+PUBLIC_URL=https://kasane.example.com
+MCP_PUBLIC_URL=https://mcp.kasane.example.com
+```
+
+Point both DNS names at your reverse proxy and configure HTTPS for both. Proxy website traffic to Kasane and route `/mcp` on the MCP hostname to the same app port. Preserve the incoming `Host` header. The agent endpoint is `https://mcp.kasane.example.com/mcp`; the private panel remains at `https://kasane.example.com/panel`.
+
+When a separate MCP hostname is configured, `/mcp` accepts only that hostname, while browser/API routes accept only `PUBLIC_URL`. Agent bearer keys are still required. Requests with an Origin header must match the MCP origin. Leaving `MCP_PUBLIC_URL` empty preserves the original single-host setup for local development. Restart the app after changing either setting.
