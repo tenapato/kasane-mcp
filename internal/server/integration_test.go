@@ -146,8 +146,12 @@ func TestOwnerAndMCPFlows(t *testing.T) {
 	}
 	defer mcpSession.Close()
 	tools, err := mcpSession.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 6 {
+	if err != nil || len(tools.Tools) != 7 {
 		t.Fatalf("SDK tool discovery failed: %+v %v", tools, err)
+	}
+	help, err := mcpSession.CallTool(ctx, &mcp.CallToolParams{Name: "kasane_help", Arguments: map[string]any{}})
+	if err != nil || help.IsError || len(help.Content) == 0 {
+		t.Fatalf("SDK help call failed: %+v %v", help, err)
 	}
 	profileResult, err := mcpSession.CallTool(ctx, &mcp.CallToolParams{Name: "kasane_profile", Arguments: map[string]any{}})
 	if err != nil || profileResult.IsError {
