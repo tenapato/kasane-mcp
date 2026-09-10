@@ -97,7 +97,7 @@ The MCP tools are `kasane_remember`, `kasane_search`, `kasane_get`, `kasane_cont
 | `PGUSER`, `PGPASSWORD`, `PGDATABASE` | set by Compose | PostgreSQL credentials and database when omitted from `DATABASE_URL` |
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant REST HTTP endpoint, `http://qdrant:6333` in Compose |
 | `QDRANT_API_KEY` | empty | Optional Qdrant API key |
-| `MCP_PUBLIC_URL` | same as `PUBLIC_URL` | Optional dedicated MCP origin; endpoint is this origin plus `/mcp` |
+| `MCP_PUBLIC_URL` | same as `PUBLIC_URL` | Optional dedicated MCP origin; its root is the MCP endpoint |
 | `PUBLIC_URL` | `http://localhost:9090` | Public URL and cookie security mode |
 | `LISTEN_ADDR` | `:9090` | HTTP listen address |
 | `TRUSTED_PROXY_CIDRS` | empty | CIDRs allowed to provide proxy headers |
@@ -127,9 +127,9 @@ PUBLIC_URL=https://kasane.example.com
 MCP_PUBLIC_URL=https://mcp.kasane.example.com
 ```
 
-Point both DNS names at your reverse proxy and configure HTTPS for both. Proxy website traffic to Kasane and route `/mcp` on the MCP hostname to the same app port. Preserve the incoming `Host` header. The agent endpoint is `https://mcp.kasane.example.com/mcp`; the private panel remains at `https://kasane.example.com/panel`.
+Point both DNS names at your reverse proxy and configure HTTPS for both. Proxy website traffic to Kasane and route `/` on the MCP hostname to the same app port. Preserve the incoming `Host` header. The agent endpoint is `https://mcp.kasane.example.com`; the private panel remains at `https://kasane.example.com/panel`.
 
-When a separate MCP hostname is configured, `/mcp` accepts only that hostname, while browser/API routes accept only `PUBLIC_URL`. Agent bearer keys are still required. Requests with an Origin header must match the MCP origin. Leaving `MCP_PUBLIC_URL` empty preserves the original single-host setup for local development. Restart the app after changing either setting.
+When a separate MCP hostname is configured, its root `/` serves MCP and `/mcp` returns 404, while browser/API routes accept only `PUBLIC_URL`. Agent bearer keys are still required. Requests with an Origin header must match the MCP origin. Leaving `MCP_PUBLIC_URL` empty preserves the original single-host setup for local development. Restart the app after changing either setting.
 
 ## Store database data on a dedicated disk
 
