@@ -204,7 +204,13 @@ func (a *App) Handler() http.Handler {
 		respond(w, 200, map[string]bool{"ok": true})
 	})
 	auth("GET /api/v1/status", a.status)
-	mux.Handle("/mcp", a.agent(a.mcpHandler()))
+	mcpHandler := a.agent(a.mcpHandler())
+	mcpOrigin, _ := url.Parse(a.cfg.MCPPublicURL)
+	webOrigin, _ := url.Parse(a.cfg.PublicURL)
+	dedicatedMCP := mcpOrigin.Host != webOrigin.Host
+	if !dedicatedMCP {
+		mux.Handle("/mcp", mcpHandler)
+	}
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { fail(w, 404, "endpoint not found") })
 	if a.cfg.WebDir != "" {
 		mux.Handle("/", spa(os.DirFS(a.cfg.WebDir)))
@@ -228,7 +234,12 @@ func (a *App) Handler() http.Handler {
 		}
 		// Validate Host ourselves, including reverse proxy deployments on loopback.
 		origin := a.cfg.PublicURL
-		if r.URL.Path == "/mcp" {
+		mcpRoot := dedicatedMCP && r.Host == mcpOrigin.Host && r.URL.Path == "/"
+		if dedicatedMCP && r.Host == mcpOrigin.Host && r.URL.Path == "/mcp" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Path == "/mcp" || mcpRoot {
 			origin = a.cfg.MCPPublicURL
 		}
 		public, _ := url.Parse(origin)
@@ -238,6 +249,10 @@ func (a *App) Handler() http.Handler {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 		defer cancel()
+		if mcpRoot {
+			mcpHandler.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		mux.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -358,7 +373,7 @@ func (a *App) status(w http.ResponseWriter, r *http.Request) {
 	if a.index.Health(r.Context()) != nil {
 		state = "unavailable"
 	}
-	respond(w, 200, map[string]any{"postgres": "ready", "qdrant": state, "pending_jobs": stats.PendingJobs, "failed_jobs": stats.FailedJobs, "memory_count": stats.MemoryCount, "mcp_url": a.cfg.MCPPublicURL + "/mcp"})
+	respond(w, 200, map[string]any{"postgres": "ready", "qdrant": state, "pending_jobs": stats.PendingJobs, "failed_jobs": stats.FailedJobs, "memory_count": stats.MemoryCount, "mcp_url": a.mcpEndpoint()})
 }
 
 func (a *App) RunWorker(ctx context.Context) {
@@ -392,4 +407,14 @@ func (a *App) RunWorker(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// mcpEndpoint keeps single-host deployments compatible with the web root.
+func (a *App) mcpEndpoint() string {
+	mcpOrigin, _ := url.Parse(a.cfg.MCPPublicURL)
+	webOrigin, _ := url.Parse(a.cfg.PublicURL)
+	if mcpOrigin.Host != webOrigin.Host {
+		return a.cfg.MCPPublicURL
+	}
+	return a.cfg.MCPPublicURL + "/mcp"
 }

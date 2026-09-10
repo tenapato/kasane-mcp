@@ -62,9 +62,12 @@ func TestDedicatedMCPHost(t *testing.T) {
 		host, path, origin string
 		want               int
 	}{
-		{"mcp.kasane.example", "/mcp", "", 401},
-		{"mcp.kasane.example", "/mcp", "https://mcp.kasane.example", 401},
-		{"mcp.kasane.example", "/mcp", "https://evil.example", 403},
+		{"mcp.kasane.example", "/", "", 401},
+		{"mcp.kasane.example", "/", "https://evil.example", 403},
+		{"kasane.example", "/", "", 200},
+		{"mcp.kasane.example", "/mcp", "", 404},
+		{"mcp.kasane.example", "/mcp", "https://mcp.kasane.example", 404},
+		{"mcp.kasane.example", "/mcp", "https://evil.example", 404},
 		{"kasane.example", "/mcp", "", 403},
 		{"mcp.kasane.example", "/api/v1/session", "", 403},
 		{"mcp.kasane.example", "/panel", "", 403},
@@ -94,5 +97,20 @@ func TestMCPOriginValidationAndDefault(t *testing.T) {
 	}
 	if a.cfg.MCPPublicURL != a.cfg.PublicURL {
 		t.Fatal("default must preserve same-host deployments")
+	}
+}
+
+func TestMCPEndpoint(t *testing.T) {
+	for _, tc := range []struct{ mcp, want string }{
+		{"https://mcp.kasane.example", "https://mcp.kasane.example"},
+		{"", "https://kasane.example/mcp"},
+	} {
+		a, err := New(nil, nil, Config{PublicURL: "https://kasane.example", MCPPublicURL: tc.mcp})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := a.mcpEndpoint(); got != tc.want {
+			t.Errorf("got %s want %s", got, tc.want)
+		}
 	}
 }
