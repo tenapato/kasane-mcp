@@ -87,7 +87,7 @@ bearer_token_env_var = "KASANE_MCP_TOKEN"
 
 Export `KASANE_MCP_TOKEN` before starting either client. These examples use a static bearer token. Kasane does not provide OAuth. Keep tokens out of committed config files.
 
-The MCP tools are `kasane_remember`, `kasane_search`, `kasane_get`, `kasane_context`, `kasane_forget`, and `kasane_profile`. Keys select the workspace, so clients do not send a workspace ID. See [`docs/api.md`](docs/api.md) for request fields and response shapes.
+Call `kasane_help` with `{}` for usage guidance and examples. The MCP tools are `kasane_help`, `kasane_remember`, `kasane_search`, `kasane_get`, `kasane_context`, `kasane_forget`, and `kasane_profile`. Keys select the workspace, so clients do not send a workspace ID. See [`docs/api.md`](docs/api.md) for request fields and response shapes.
 
 ## Configuration
 
