@@ -35,7 +35,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-kasane}
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - ${POSTGRES_STORAGE:-postgres-data}:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -47,7 +47,7 @@ services:
     environment:
       QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
     volumes:
-      - qdrant-data:/qdrant/storage
+      - ${QDRANT_STORAGE:-qdrant-data}:/qdrant/storage
 
 volumes:
   postgres-data:

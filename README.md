@@ -130,3 +130,22 @@ MCP_PUBLIC_URL=https://mcp.kasane.example.com
 Point both DNS names at your reverse proxy and configure HTTPS for both. Proxy website traffic to Kasane and route `/mcp` on the MCP hostname to the same app port. Preserve the incoming `Host` header. The agent endpoint is `https://mcp.kasane.example.com/mcp`; the private panel remains at `https://kasane.example.com/panel`.
 
 When a separate MCP hostname is configured, `/mcp` accepts only that hostname, while browser/API routes accept only `PUBLIC_URL`. Agent bearer keys are still required. Requests with an Origin header must match the MCP origin. Leaving `MCP_PUBLIC_URL` empty preserves the original single-host setup for local development. Restart the app after changing either setting.
+
+## Store database data on a dedicated disk
+
+For Dokploy, set these in the Compose service's Environment tab:
+
+```dotenv
+POSTGRES_STORAGE=/mnt/data2tb/kasane/postgres
+QDRANT_STORAGE=/mnt/data2tb/kasane/qdrant
+```
+
+Before deploying, run on the Docker host (not inside the app container):
+
+```sh
+mountpoint -q /mnt/data2tb && sudo mkdir -p /mnt/data2tb/kasane/postgres /mnt/data2tb/kasane/qdrant
+```
+
+Ensure the disk is mounted at `/mnt/data2tb` before Docker starts, including after a reboot. PostgreSQL records and Qdrant indexes will live in those directories. Application images and Docker build caches continue to use Docker's own storage directory. Leave the variables empty for the existing named-volume setup used locally.
+
+Changing these paths does not move existing data. For an existing installation, stop writes and back up/migrate its data before switching mounts; otherwise Kasane will see empty databases. Keep backups on separate storage.
