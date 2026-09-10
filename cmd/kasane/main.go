@@ -111,7 +111,7 @@ func run() error {
 		return nil
 	}
 	q := search.NewQdrant(env("QDRANT_URL", "http://localhost:6333"), os.Getenv("QDRANT_API_KEY"))
-	app, e := server.New(s, q, server.Config{PublicURL: env("PUBLIC_URL", "http://localhost:8080"), WebDir: os.Getenv("WEB_DIR"), TrustedProxyCIDRs: os.Getenv("TRUSTED_PROXY_CIDRS")})
+	app, e := server.New(s, q, server.Config{MCPPublicURL: os.Getenv("MCP_PUBLIC_URL"), PublicURL: env("PUBLIC_URL", "http://localhost:8080"), WebDir: os.Getenv("WEB_DIR"), TrustedProxyCIDRs: os.Getenv("TRUSTED_PROXY_CIDRS")})
 	if e != nil {
 		return e
 	}

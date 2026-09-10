@@ -22,7 +22,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type Config struct{ PublicURL, WebDir, TrustedProxyCIDRs string }
+type Config struct{ PublicURL, MCPPublicURL, WebDir, TrustedProxyCIDRs string }
 type App struct {
 	store        *store.Store
 	index        *search.Qdrant
@@ -36,16 +36,23 @@ type App struct {
 
 func New(s *store.Store, index *search.Qdrant, cfg Config) (*App, error) {
 	cfg.PublicURL = strings.TrimRight(cfg.PublicURL, "/")
-	u, e := url.Parse(cfg.PublicURL)
-	if e != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
-		return nil, fmt.Errorf("PUBLIC_URL must be an http(s) origin without a path")
+	cfg.MCPPublicURL = strings.TrimRight(cfg.MCPPublicURL, "/")
+	if cfg.MCPPublicURL == "" {
+		cfg.MCPPublicURL = cfg.PublicURL
 	}
-	if u.Scheme == "http" {
-		ip, err := netip.ParseAddr(u.Hostname())
-		if u.Hostname() != "localhost" && (err != nil || !ip.IsLoopback()) {
-			return nil, fmt.Errorf("PUBLIC_URL requires HTTPS except for localhost development")
+	for name, origin := range map[string]string{"PUBLIC_URL": cfg.PublicURL, "MCP_PUBLIC_URL": cfg.MCPPublicURL} {
+		u, err := url.Parse(origin)
+		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+			return nil, fmt.Errorf("%s must be an http(s) origin without a path", name)
+		}
+		if u.Scheme == "http" {
+			ip, err := netip.ParseAddr(u.Hostname())
+			if u.Hostname() != "localhost" && (err != nil || !ip.IsLoopback()) {
+				return nil, fmt.Errorf("%s requires HTTPS except for localhost development", name)
+			}
 		}
 	}
+	u, _ := url.Parse(cfg.PublicURL)
 	a := &App{store: s, index: index, search: &search.Service{Repo: s, Index: index}, cfg: cfg, secure: u.Scheme == "https", loginLimiter: newLimiter()}
 	for _, s := range strings.Split(cfg.TrustedProxyCIDRs, ",") {
 		if s = strings.TrimSpace(s); s != "" {
@@ -220,7 +227,11 @@ func (a *App) Handler() http.Handler {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		}
 		// Validate Host ourselves, including reverse proxy deployments on loopback.
-		public, _ := url.Parse(a.cfg.PublicURL)
+		origin := a.cfg.PublicURL
+		if r.URL.Path == "/mcp" {
+			origin = a.cfg.MCPPublicURL
+		}
+		public, _ := url.Parse(origin)
 		if r.URL.Path != "/healthz" && r.URL.Path != "/readyz" && r.Host != public.Host {
 			fail(w, 403, "unexpected host")
 			return
@@ -347,7 +358,7 @@ func (a *App) status(w http.ResponseWriter, r *http.Request) {
 	if a.index.Health(r.Context()) != nil {
 		state = "unavailable"
 	}
-	respond(w, 200, map[string]any{"postgres": "ready", "qdrant": state, "pending_jobs": stats.PendingJobs, "failed_jobs": stats.FailedJobs, "memory_count": stats.MemoryCount, "mcp_url": a.cfg.PublicURL + "/mcp"})
+	respond(w, 200, map[string]any{"postgres": "ready", "qdrant": state, "pending_jobs": stats.PendingJobs, "failed_jobs": stats.FailedJobs, "memory_count": stats.MemoryCount, "mcp_url": a.cfg.MCPPublicURL + "/mcp"})
 }
 
 func (a *App) RunWorker(ctx context.Context) {

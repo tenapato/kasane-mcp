@@ -220,7 +220,7 @@ func (a *App) owner(next http.Handler) http.Handler {
 
 func (a *App) agent(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if origin := r.Header.Get("Origin"); origin != "" && !validOrigin(r, a.cfg.PublicURL) {
+		if origin := r.Header.Get("Origin"); origin != "" && !validOrigin(r, a.cfg.MCPPublicURL) {
 			fail(w, 403, "invalid origin")
 			return
 		}

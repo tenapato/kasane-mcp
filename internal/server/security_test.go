@@ -52,3 +52,47 @@ func TestRejectsPlainHTTPForPublicHost(t *testing.T) {
 		t.Fatal("public HTTP allowed")
 	}
 }
+
+func TestDedicatedMCPHost(t *testing.T) {
+	a, err := New(nil, nil, Config{PublicURL: "https://kasane.example", MCPPublicURL: "https://mcp.kasane.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		host, path, origin string
+		want               int
+	}{
+		{"mcp.kasane.example", "/mcp", "", 401},
+		{"mcp.kasane.example", "/mcp", "https://mcp.kasane.example", 401},
+		{"mcp.kasane.example", "/mcp", "https://evil.example", 403},
+		{"kasane.example", "/mcp", "", 403},
+		{"mcp.kasane.example", "/api/v1/session", "", 403},
+		{"mcp.kasane.example", "/panel", "", 403},
+		{"kasane.example", "/api/v1/session", "", 401},
+	} {
+		r := httptest.NewRequest("GET", "https://"+tc.host+tc.path, nil)
+		if tc.origin != "" {
+			r.Header.Set("Origin", tc.origin)
+		}
+		w := httptest.NewRecorder()
+		a.Handler().ServeHTTP(w, r)
+		if w.Code != tc.want {
+			t.Errorf("%s%s origin=%s: got %d want %d", tc.host, tc.path, tc.origin, w.Code, tc.want)
+		}
+	}
+}
+
+func TestMCPOriginValidationAndDefault(t *testing.T) {
+	for _, origin := range []string{"http://mcp.example.com", "https://mcp.example.com/path", "https://user:pass@mcp.example.com", "https://mcp.example.com?q=x"} {
+		if _, err := New(nil, nil, Config{PublicURL: "https://kasane.example", MCPPublicURL: origin}); err == nil {
+			t.Errorf("accepted invalid MCP origin %s", origin)
+		}
+	}
+	a, err := New(nil, nil, Config{PublicURL: "http://localhost:8080"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.cfg.MCPPublicURL != a.cfg.PublicURL {
+		t.Fatal("default must preserve same-host deployments")
+	}
+}
