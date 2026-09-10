@@ -39,7 +39,7 @@ func run() error {
 	}
 	if cmd == "healthcheck" {
 		c := http.Client{Timeout: 3 * time.Second}
-		addr := env("LISTEN_ADDR", ":8080")
+		addr := env("LISTEN_ADDR", ":9090")
 		if strings.HasPrefix(addr, ":") {
 			addr = "127.0.0.1" + addr
 		}
@@ -111,13 +111,13 @@ func run() error {
 		return nil
 	}
 	q := search.NewQdrant(env("QDRANT_URL", "http://localhost:6333"), os.Getenv("QDRANT_API_KEY"))
-	app, e := server.New(s, q, server.Config{MCPPublicURL: os.Getenv("MCP_PUBLIC_URL"), PublicURL: env("PUBLIC_URL", "http://localhost:8080"), WebDir: os.Getenv("WEB_DIR"), TrustedProxyCIDRs: os.Getenv("TRUSTED_PROXY_CIDRS")})
+	app, e := server.New(s, q, server.Config{MCPPublicURL: os.Getenv("MCP_PUBLIC_URL"), PublicURL: env("PUBLIC_URL", "http://localhost:9090"), WebDir: os.Getenv("WEB_DIR"), TrustedProxyCIDRs: os.Getenv("TRUSTED_PROXY_CIDRS")})
 	if e != nil {
 		return e
 	}
 	workerDone := make(chan struct{})
 	go func() { defer close(workerDone); app.RunWorker(ctx) }()
-	srv := http.Server{Addr: env("LISTEN_ADDR", ":8080"), Handler: app.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
+	srv := http.Server{Addr: env("LISTEN_ADDR", ":9090"), Handler: app.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
 	done := make(chan error, 1)
 	go func() { slog.Info("kasane listening", "address", srv.Addr); done <- srv.ListenAndServe() }()
 	select {
