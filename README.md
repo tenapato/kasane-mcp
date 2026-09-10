@@ -32,7 +32,7 @@ docker compose exec -e KASANE_ADMIN_PASSWORD app \
 Create a workspace and an agent key through the API. The key token is returned once, so store it in your secret manager:
 
 ```sh
-BASE_URL=http://localhost:8080
+BASE_URL=http://localhost:9090
 umask 077
 jq -n '{username:"owner",password:env.KASANE_ADMIN_PASSWORD}' | \
   curl -fsS -c cookies.txt -H "Origin: $BASE_URL" -H 'Content-Type: application/json' \
@@ -60,7 +60,7 @@ go run ./cmd/kasane serve
 
 `serve` also applies migrations automatically; the separate `migrate` command is available when you want to run migrations without starting the server. The bundled Compose databases do not publish host ports by default.
 
-Useful commands are `kasane migrate`, `kasane bootstrap --username NAME`, and `kasane reindex [--workspace UUID]`. The server defaults to `LISTEN_ADDR=:8080`. Set `PUBLIC_URL` to the browser-visible URL. HTTPS is required except for loopback development URLs. HTTPS mode uses secure session cookies. Set `TRUSTED_PROXY_CIDRS` only for proxy networks you control.
+Useful commands are `kasane migrate`, `kasane bootstrap --username NAME`, and `kasane reindex [--workspace UUID]`. The server defaults to `LISTEN_ADDR=:9090`. Set `PUBLIC_URL` to the browser-visible URL. HTTPS is required except for loopback development URLs. HTTPS mode uses secure session cookies. Set `TRUSTED_PROXY_CIDRS` only for proxy networks you control.
 
 ## Connect an agent
 
@@ -98,8 +98,8 @@ The MCP tools are `kasane_remember`, `kasane_search`, `kasane_get`, `kasane_cont
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant REST HTTP endpoint, `http://qdrant:6333` in Compose |
 | `QDRANT_API_KEY` | empty | Optional Qdrant API key |
 | `MCP_PUBLIC_URL` | same as `PUBLIC_URL` | Optional dedicated MCP origin; endpoint is this origin plus `/mcp` |
-| `PUBLIC_URL` | `http://localhost:8080` | Public URL and cookie security mode |
-| `LISTEN_ADDR` | `:8080` | HTTP listen address |
+| `PUBLIC_URL` | `http://localhost:9090` | Public URL and cookie security mode |
+| `LISTEN_ADDR` | `:9090` | HTTP listen address |
 | `TRUSTED_PROXY_CIDRS` | empty | CIDRs allowed to provide proxy headers |
 | `WEB_DIR` | empty | Optional directory containing the private web UI |
 | `KASANE_ADMIN_PASSWORD` | empty | Bootstrap password from environment |

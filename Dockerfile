@@ -9,6 +9,6 @@ FROM alpine:3.22
 RUN addgroup -S kasane && adduser -S -G kasane kasane
 COPY --from=build /out/kasane /usr/local/bin/kasane
 USER kasane
-EXPOSE 8080
+EXPOSE 9090
 ENTRYPOINT ["/usr/local/bin/kasane"]
 CMD ["serve"]
