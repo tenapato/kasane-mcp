@@ -16,7 +16,7 @@ All authenticated state-changing owner requests require both the matching `Origi
 
 `POST /api/v1/workspaces` accepts `{ "name": string }` and returns a `Workspace` with status 201.
 
-`POST /api/v1/workspaces/{workspace}/keys` accepts `{ "name": string, "scope": "read" | "write" }`. It returns status 201 with `{ "key": Key, "token": string }`. The token is shown only in this response. `GET` on the same path returns `{ "keys": Key[] }`. `DELETE /api/v1/workspaces/{workspace}/keys/{key}` revokes a key and returns `{ "ok": true }`.
+`POST /api/v1/workspaces/{workspace}/keys` accepts `{ "name": string, "scope": "read" | "write", "access_mode": "single" | "selected" | "all", "workspace_ids": string[], "can_create_workspaces": boolean }`. Access defaults to `single` and workspace creation to false. For `selected`, pass workspace IDs (maximum 500); the home workspace in the URL is always included. For other modes omit `workspace_ids`. Creation permission requires a multi-workspace write key. `all` includes future workspaces; `selected` additionally gains any workspaces the key creates. Keys are listed and revoked from their home workspace. Returned key metadata includes these access fields. It returns status 201 with `{ "key": Key, "token": string }`. The token is shown only in this response. `GET` on the same path returns `{ "keys": Key[] }`. `DELETE /api/v1/workspaces/{workspace}/keys/{key}` revokes a key and returns `{ "ok": true }`.
 
 ## Memories
 
@@ -38,6 +38,12 @@ List results report the total matching database count. Ranked Qdrant search resu
 
 ## MCP
 
-Connect an MCP client to `/mcp` using `Authorization: Bearer <agent-token>`. The key determines the workspace. Read keys may call retrieval tools; write keys are required for `kasane_remember` and `kasane_forget`.
+Connect an MCP client to the root of the dedicated `MCP_PUBLIC_URL` hostname, or `/mcp` for single-host deployments, using `Authorization: Bearer <agent-token>`. Read keys may call retrieval tools; write keys are required for remember, forget, and move. Agents cannot manage keys or delete workspaces.
 
-Available tools are `kasane_remember`, `kasane_search`, `kasane_get`, `kasane_context`, `kasane_forget`, and `kasane_profile`. Search is keyword based. `kasane_context` and `kasane_profile` return exact authored text, provenance IDs, character counts, and truncation status. Their character budget defaults to 12,000 and has a maximum of 40,000. Indexing is asynchronous, so writes are durable before they become searchable.
+Use `kasane_workspaces` with `{}` to list accessible workspaces and key permissions. Multi-workspace keys must pass `workspace_id` on every memory, search, context, or profile call. Single-workspace keys can omit it, but cannot select another workspace. No active workspace is stored between calls.
+
+`kasane_workspace_create` accepts `{ "name": string }` and returns the created workspace. It requires the separate creation permission on a multi-workspace write key. Creation and granting access are atomic. Creation is not idempotent: after an ambiguous response, list workspaces before retrying.
+
+`kasane_move` accepts `{ "workspace_id": string, "target_workspace_id": string, "id": string, "expected_revision": integer }`. Both projects must be writable by the key. It preserves ID, authored fields, and creation time, increments revision, clears the original create idempotency key, and queues vector reindexing. The source immediately loses access. After an ambiguous response, read the memory in the destination before retrying.
+
+Call `kasane_help` with `{}` for the complete guide. Available tools are `kasane_help`, `kasane_workspaces`, `kasane_workspace_create`, `kasane_move`, `kasane_remember`, `kasane_search`, `kasane_get`, `kasane_context`, `kasane_forget`, and `kasane_profile`. Search is keyword based. `kasane_context` and `kasane_profile` return exact authored text, provenance IDs, character counts, and truncation status. Their character budget defaults to 12,000 and has a maximum of 40,000. Indexing is asynchronous, so writes are durable before they become searchable.
