@@ -6,7 +6,7 @@ type helpResult struct {
 
 const kasaneGuide = `Kasane usage
 
-Workspace = project. Related repositories for the same product can share one workspace. Keys can access one workspace, selected workspaces, or all current and future workspaces. Call kasane_workspaces with {} to discover accessible projects and permissions. For multi-workspace keys, include workspace_id on each memory, search, context, or profile call. There is no shared active workspace. Single-workspace keys can omit workspace_id. If the intended project is unclear, ask the user before writing. Knowledge is not automatically shared across workspaces.
+Workspace = project. Each workspace belongs exclusively to one user. No workspace or agent key is shared across users. Related repositories for the same product can share one workspace. Keys can access one workspace, selected workspaces, or all current and future workspaces belonging to their user. Call kasane_workspaces with {} to discover accessible projects and permissions. For multi-workspace keys, include workspace_id on each memory, search, context, or profile call. There is no shared active workspace. Single-workspace keys can omit workspace_id. If the intended project is unclear, ask the user before writing. Knowledge is not automatically shared across workspaces.
 
 Start a task:
 1. Choose your project with kasane_workspaces, then call kasane_profile with {"workspace_id":"PROJECT_ID"} (or {} for single-workspace keys) to read the project's saved stack and build practices.

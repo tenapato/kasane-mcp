@@ -131,7 +131,7 @@ func (a *App) Handler() http.Handler {
 	auth := func(pattern string, fn http.HandlerFunc) { mux.Handle(pattern, a.owner(fn)) }
 	auth("GET /api/v1/session", func(w http.ResponseWriter, r *http.Request) {
 		id := r.Context().Value(identityKey{}).(identity)
-		respond(w, 200, map[string]string{"username": id.Username, "csrf_token": id.CSRF})
+		respond(w, 200, map[string]string{"username": id.Username, "csrf_token": id.CSRF, "role": id.Role})
 	})
 	auth("POST /api/v1/logout", func(w http.ResponseWriter, r *http.Request) {
 		c, _ := r.Cookie("kasane_session")
@@ -143,7 +143,7 @@ func (a *App) Handler() http.Handler {
 		respond(w, 200, map[string]bool{"ok": true})
 	})
 	auth("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
-		ws, e := a.store.Workspaces(r.Context())
+		ws, e := a.store.WorkspacesFor(r.Context(), r.Context().Value(identityKey{}).(identity).Username)
 		if e != nil {
 			a.failure(w, e)
 			return
@@ -162,7 +162,7 @@ func (a *App) Handler() http.Handler {
 			fail(w, 400, "workspace name must be 1–120 bytes")
 			return
 		}
-		ws, e := a.store.CreateWorkspace(r.Context(), in.Name)
+		ws, e := a.store.CreateWorkspaceOwned(r.Context(), in.Name, r.Context().Value(identityKey{}).(identity).Username)
 		if e != nil {
 			a.failure(w, e)
 			return
@@ -176,7 +176,7 @@ func (a *App) Handler() http.Handler {
 				fail(w, 400, "invalid workspace ID")
 				return
 			}
-			ok, e := a.store.WorkspaceExists(r.Context(), id)
+			ok, e := a.store.WorkspaceOwned(r.Context(), id, r.Context().Value(identityKey{}).(identity).Username)
 			if e != nil {
 				a.failure(w, e)
 				return
@@ -188,6 +188,8 @@ func (a *App) Handler() http.Handler {
 			fn(w, r)
 		})
 	}
+	workspace("GET /api/v1/workspaces/{workspace}/map", a.knowledgeMap)
+	workspace("GET /api/v1/workspaces/{workspace}/usage", a.usage)
 	workspace("GET /api/v1/workspaces/{workspace}/memories", a.memories)
 	workspace("POST /api/v1/workspaces/{workspace}/memories", a.memories)
 	workspace("GET /api/v1/workspaces/{workspace}/memories/{memory}", a.memory)
@@ -204,6 +206,22 @@ func (a *App) Handler() http.Handler {
 		respond(w, 200, map[string]bool{"ok": true})
 	})
 	auth("GET /api/v1/status", a.status)
+	mux.HandleFunc("POST /api/v1/waitlist", a.joinWaitlist)
+	mux.HandleFunc("POST /api/v1/invitations/accept", a.acceptInvitation)
+	admin := func(pattern string, fn http.HandlerFunc) {
+		auth(pattern, func(w http.ResponseWriter, r *http.Request) {
+			if r.Context().Value(identityKey{}).(identity).Role != "admin" {
+				fail(w, 403, "administrator access required")
+				return
+			}
+			fn(w, r)
+		})
+	}
+	admin("GET /api/v1/admin/waitlist", a.listWaitlist)
+	admin("GET /api/v1/admin/invitations", a.invitations)
+	admin("POST /api/v1/admin/invitations", a.invitations)
+	admin("DELETE /api/v1/admin/invitations/{invitation}", a.invitations)
+
 	mcpHandler := a.agent(a.mcpHandler())
 	mcpOrigin, _ := url.Parse(a.cfg.MCPPublicURL)
 	webOrigin, _ := url.Parse(a.cfg.PublicURL)
@@ -364,13 +382,13 @@ func (a *App) memory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) status(w http.ResponseWriter, r *http.Request) {
-	stats, e := a.store.Stats(r.Context())
+	stats, e := a.store.StatsFor(r.Context(), r.Context().Value(identityKey{}).(identity).Username)
 	if e != nil {
 		a.failure(w, e)
 		return
 	}
 	state := "ready"
-	if a.index.Health(r.Context()) != nil {
+	if a.index == nil || a.index.Health(r.Context()) != nil {
 		state = "unavailable"
 	}
 	respond(w, 200, map[string]any{"postgres": "ready", "qdrant": state, "pending_jobs": stats.PendingJobs, "failed_jobs": stats.FailedJobs, "memory_count": stats.MemoryCount, "mcp_url": a.mcpEndpoint()})

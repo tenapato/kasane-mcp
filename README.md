@@ -149,3 +149,11 @@ mountpoint -q /mnt/data2tb && sudo mkdir -p /mnt/data2tb/kasane/postgres /mnt/da
 Ensure the disk is mounted at `/mnt/data2tb` before Docker starts, including after a reboot. PostgreSQL records and Qdrant indexes will live in those directories. Application images and Docker build caches continue to use Docker's own storage directory. Leave the variables empty for the existing named-volume setup used locally.
 
 Changing these paths does not move existing data. For an existing installation, stop writes and back up/migrate its data before switching mounts; otherwise Kasane will see empty databases. Keep backups on separate storage.
+
+## Invitation-only accounts
+
+The bootstrap account is the instance administrator. Public account creation requires a valid invitation; joining `/waitlist` does not grant access. In the private web panel, the administrator opens **Invitations** to review the queue, issue a link, or revoke an unused invitation. Links expire after seven days and can be used once. Copy the link and send it to the intended recipient yourself; this release does not send email automatically.
+
+Acceptance creates a regular account and a private **Personal** workspace. Users can create additional project workspaces. Workspaces, memories, keys, and usage counts are private to their user. Even the instance administrator cannot browse another user's project data. An agent key with all-workspaces access covers only the key owner's current and future workspaces.
+
+On upgrade, migrations assign existing workspaces to the original administrator and retain existing agent keys. Deploy the backend before the updated web UI, then sign in again or reload to receive your role. No new environment variables are required. Behind a reverse proxy, configure `TRUSTED_PROXY_CIDRS` with only your controlled proxy networks so public signup rate limits use the actual client IP.

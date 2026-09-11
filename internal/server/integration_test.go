@@ -157,6 +157,10 @@ func TestOwnerAndMCPFlows(t *testing.T) {
 	if err != nil || profileResult.IsError {
 		t.Fatalf("SDK profile call failed: %+v %v", profileResult, err)
 	}
+	usage, usageErr := s.Usage(ctx, wid)
+	if usageErr != nil || usage.Totals.Retrievals != 1 {
+		t.Fatalf("profile not accounted: %+v %v", usage, usageErr)
+	}
 	keyID := k["key"].(map[string]any)["id"].(string)
 	call := func(name string, args any, token string) map[string]any {
 		t.Helper()
