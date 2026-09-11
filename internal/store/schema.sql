@@ -24,5 +24,7 @@ CREATE TABLE IF NOT EXISTS outbox(
 CREATE INDEX IF NOT EXISTS outbox_due ON outbox(next_attempt,created_at);
 CREATE TABLE IF NOT EXISTS owners(username text PRIMARY KEY,password_hash text NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions(token_hash text PRIMARY KEY,username text REFERENCES owners(username),csrf_token text NOT NULL,expires_at timestamptz NOT NULL);
-CREATE TABLE IF NOT EXISTS agent_keys(id uuid PRIMARY KEY,workspace_id uuid REFERENCES workspaces(id),name text NOT NULL,prefix text NOT NULL,token_hash text UNIQUE NOT NULL,scope text NOT NULL CHECK(scope IN ('read','write')),created_at timestamptz NOT NULL DEFAULT now(),last_used_at timestamptz,revoked_at timestamptz);
+CREATE TABLE IF NOT EXISTS agent_keys(id uuid PRIMARY KEY,workspace_id uuid REFERENCES workspaces(id),name text NOT NULL,prefix text NOT NULL,token_hash text UNIQUE NOT NULL,scope text NOT NULL CHECK(scope IN ('read','write')),access_mode text NOT NULL DEFAULT 'single' CHECK(access_mode IN ('single','selected','all')),can_create_workspaces boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),last_used_at timestamptz,revoked_at timestamptz);
+CREATE TABLE IF NOT EXISTS agent_key_workspaces(key_id uuid NOT NULL REFERENCES agent_keys(id) ON DELETE CASCADE,workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,PRIMARY KEY(key_id,workspace_id));
+INSERT INTO agent_key_workspaces(key_id,workspace_id) SELECT id,workspace_id FROM agent_keys WHERE workspace_id IS NOT NULL ON CONFLICT DO NOTHING;
 INSERT INTO schema_version(version) VALUES(1) ON CONFLICT DO NOTHING;

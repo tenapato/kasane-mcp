@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -76,6 +77,42 @@ func (s *Store) CreateWorkspace(ctx context.Context, name string) (core.Workspac
 	var w core.Workspace
 	e = s.DB.QueryRow(ctx, `INSERT INTO workspaces(id,name) VALUES($1,$2) RETURNING id::text,name,created_at`, id, strings.TrimSpace(name)).Scan(&w.ID, &w.Name, &w.CreatedAt)
 	return w, e
+}
+
+// CreateWorkspaceForKey creates a workspace and grants the key access in one
+// transaction. The key's existing home workspace remains unchanged.
+func (s *Store) CreateWorkspaceForKey(ctx context.Context, keyID, name string) (core.Workspace, error) {
+	if !validUUID(keyID) || strings.TrimSpace(name) == "" {
+		return core.Workspace{}, core.ErrInvalid
+	}
+	id, e := uuid()
+	if e != nil {
+		return core.Workspace{}, e
+	}
+	tx, e := s.DB.Begin(ctx)
+	if e != nil {
+		return core.Workspace{}, e
+	}
+	defer tx.Rollback(ctx)
+	var exists bool
+	if e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agent_keys WHERE id=$1::uuid)`, keyID).Scan(&exists); e != nil {
+		return core.Workspace{}, e
+	}
+	if !exists {
+		return core.Workspace{}, core.ErrNotFound
+	}
+	var w core.Workspace
+	e = tx.QueryRow(ctx, `INSERT INTO workspaces(id,name) VALUES($1,$2) RETURNING id::text,name,created_at`, id, strings.TrimSpace(name)).Scan(&w.ID, &w.Name, &w.CreatedAt)
+	if e != nil {
+		return core.Workspace{}, e
+	}
+	if _, e = tx.Exec(ctx, `INSERT INTO agent_key_workspaces(key_id,workspace_id) VALUES($1::uuid,$2::uuid)`, keyID, id); e != nil {
+		return core.Workspace{}, e
+	}
+	if e = tx.Commit(ctx); e != nil {
+		return core.Workspace{}, e
+	}
+	return w, nil
 }
 func (s *Store) Workspaces(ctx context.Context) ([]core.Workspace, error) {
 	rows, e := s.DB.Query(ctx, `SELECT id::text,name,created_at FROM workspaces ORDER BY created_at,id`)
@@ -228,6 +265,65 @@ func (s *Store) Remember(ctx context.Context, ws string, in core.RememberInput) 
 		e = tx.Commit(ctx)
 	}
 	return out, e
+}
+
+// Move changes only the owning workspace while preserving the memory ID and
+// authored fields. It is a revisioned write and queues a fresh index event.
+func (s *Store) Move(ctx context.Context, sourceWS, targetWS, id string, expectedRevision int64) (core.Memory, error) {
+	if !validUUID(sourceWS) || !validUUID(targetWS) || !validUUID(id) || expectedRevision <= 0 || sourceWS == targetWS {
+		return core.Memory{}, core.ErrInvalid
+	}
+	tx, e := s.DB.Begin(ctx)
+	if e != nil {
+		return core.Memory{}, e
+	}
+	defer tx.Rollback(ctx)
+	// Lock both workspaces before the memory, in a stable order to avoid
+	// deadlocks between simultaneous moves in opposite directions.
+	workspaces := []string{sourceWS, targetWS}
+	sort.Strings(workspaces)
+	for _, ws := range workspaces {
+		if e = tx.QueryRow(ctx, `SELECT id FROM workspaces WHERE id=$1::uuid FOR UPDATE`, ws).Scan(new(string)); errors.Is(e, pgx.ErrNoRows) {
+			return core.Memory{}, core.ErrNotFound
+		} else if e != nil {
+			return core.Memory{}, e
+		}
+	}
+	// Lock the memory before touching its outbox row, matching ProcessOne.
+	var kind string
+	e = tx.QueryRow(ctx, `SELECT kind FROM memories WHERE id=$1::uuid AND workspace_id=$2::uuid AND deleted=false FOR UPDATE`, id, sourceWS).Scan(&kind)
+	if errors.Is(e, pgx.ErrNoRows) {
+		return core.Memory{}, core.ErrConflict
+	}
+	if e != nil {
+		return core.Memory{}, e
+	}
+	if kind == "stack" || kind == "practice" {
+		var n int
+		if e = tx.QueryRow(ctx, `SELECT count(*) FROM memories WHERE workspace_id=$1::uuid AND deleted=false AND kind IN ('stack','practice')`, targetWS).Scan(&n); e != nil {
+			return core.Memory{}, e
+		}
+		if n >= 100 {
+			return core.Memory{}, fmt.Errorf("%w: development profile is limited to 100 entries", core.ErrInvalid)
+		}
+	}
+	var out core.Memory
+	var indexed bool
+	e = tx.QueryRow(ctx, `UPDATE memories SET workspace_id=$1::uuid,idempotency_key=NULL,revision=revision+1,indexed_revision=0,updated_at=now() WHERE id=$2::uuid AND workspace_id=$3::uuid AND deleted=false AND revision=$4 RETURNING `+memCols, targetWS, id, sourceWS, expectedRevision).Scan(&out.Kind, &out.ID, &out.WorkspaceID, &out.Title, &out.Content, &out.Tags, &out.Source, &out.Revision, &out.IndexedRevision, &indexed, &out.CreatedAt, &out.UpdatedAt, &out.Deleted)
+	if errors.Is(e, pgx.ErrNoRows) {
+		return core.Memory{}, core.ErrConflict
+	}
+	if e != nil {
+		return core.Memory{}, e
+	}
+	out.IndexingStatus = "pending"
+	if e = s.outboxTx(ctx, tx, id, "upsert", out.Revision); e != nil {
+		return core.Memory{}, e
+	}
+	if e = tx.Commit(ctx); e != nil {
+		return core.Memory{}, e
+	}
+	return out, nil
 }
 
 func mapErr(e error) error {

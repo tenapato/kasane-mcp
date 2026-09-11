@@ -37,7 +37,10 @@ func validOrigin(r *http.Request, publicURL string) bool {
 	return r.Header.Get("Origin") == strings.TrimRight(publicURL, "/")
 }
 
-type identity struct{ Username, CSRF, Workspace, Scope string }
+type identity struct {
+	Username, CSRF, Workspace, Scope, KeyID, AccessMode string
+	CanCreateWorkspaces                                 bool
+}
 type identityKey struct{}
 
 type throttle struct {
@@ -230,7 +233,7 @@ func (a *App) agent(next http.Handler) http.Handler {
 			return
 		}
 		var id identity
-		err := a.store.DB.QueryRow(r.Context(), "UPDATE agent_keys SET last_used_at=now() WHERE token_hash=$1 AND revoked_at IS NULL RETURNING workspace_id,scope", hashToken(strings.TrimPrefix(auth, "Bearer "))).Scan(&id.Workspace, &id.Scope)
+		err := a.store.DB.QueryRow(r.Context(), "UPDATE agent_keys SET last_used_at=now() WHERE token_hash=$1 AND revoked_at IS NULL RETURNING workspace_id,scope,id::text,access_mode,can_create_workspaces", hashToken(strings.TrimPrefix(auth, "Bearer "))).Scan(&id.Workspace, &id.Scope, &id.KeyID, &id.AccessMode, &id.CanCreateWorkspaces)
 		if errors.Is(err, pgx.ErrNoRows) {
 			fail(w, 401, "valid agent key required")
 			return
@@ -257,20 +260,23 @@ func principal(ctx context.Context, write bool) (identity, error) {
 var errForbidden = errors.New("permission denied")
 
 type agentKey struct {
-	ID         string     `json:"id"`
-	Name       string     `json:"name"`
-	Prefix     string     `json:"prefix"`
-	Scope      string     `json:"scope"`
-	CreatedAt  time.Time  `json:"created_at"`
-	LastUsedAt *time.Time `json:"last_used_at"`
-	RevokedAt  *time.Time `json:"revoked_at"`
+	AccessMode          string     `json:"access_mode"`
+	WorkspaceIDs        []string   `json:"workspace_ids"`
+	CanCreateWorkspaces bool       `json:"can_create_workspaces"`
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	Prefix              string     `json:"prefix"`
+	Scope               string     `json:"scope"`
+	CreatedAt           time.Time  `json:"created_at"`
+	LastUsedAt          *time.Time `json:"last_used_at"`
+	RevokedAt           *time.Time `json:"revoked_at"`
 }
 
 func (a *App) keys(w http.ResponseWriter, r *http.Request) {
-	workspace := r.PathValue("workspace")
+	workspace := strings.ToLower(r.PathValue("workspace"))
 	switch r.Method {
 	case "GET":
-		rows, err := a.store.DB.Query(r.Context(), "SELECT id,name,prefix,scope,created_at,last_used_at,revoked_at FROM agent_keys WHERE workspace_id=$1 ORDER BY created_at DESC", workspace)
+		rows, err := a.store.DB.Query(r.Context(), "SELECT id,name,prefix,scope,created_at,last_used_at,revoked_at,access_mode,can_create_workspaces,ARRAY(SELECT workspace_id::text FROM agent_key_workspaces WHERE key_id=agent_keys.id ORDER BY workspace_id) FROM agent_keys WHERE workspace_id=$1 ORDER BY created_at DESC", workspace)
 		if err != nil {
 			a.failure(w, err)
 			return
@@ -279,7 +285,7 @@ func (a *App) keys(w http.ResponseWriter, r *http.Request) {
 		keys := []agentKey{}
 		for rows.Next() {
 			var k agentKey
-			if err := rows.Scan(&k.ID, &k.Name, &k.Prefix, &k.Scope, &k.CreatedAt, &k.LastUsedAt, &k.RevokedAt); err != nil {
+			if err := rows.Scan(&k.ID, &k.Name, &k.Prefix, &k.Scope, &k.CreatedAt, &k.LastUsedAt, &k.RevokedAt, &k.AccessMode, &k.CanCreateWorkspaces, &k.WorkspaceIDs); err != nil {
 				a.failure(w, err)
 				return
 			}
@@ -292,8 +298,11 @@ func (a *App) keys(w http.ResponseWriter, r *http.Request) {
 		respond(w, 200, map[string]any{"keys": keys})
 	case "POST":
 		var in struct {
-			Name  string `json:"name"`
-			Scope string `json:"scope"`
+			Name                string   `json:"name"`
+			Scope               string   `json:"scope"`
+			AccessMode          string   `json:"access_mode"`
+			WorkspaceIDs        []string `json:"workspace_ids"`
+			CanCreateWorkspaces bool     `json:"can_create_workspaces"`
 		}
 		if !decode(w, r, &in) {
 			return
@@ -303,13 +312,64 @@ func (a *App) keys(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, "name and scope (read or write) required")
 			return
 		}
-		token := "ks_" + randomToken()
-		k := agentKey{ID: core.UUID(), Name: in.Name, Scope: in.Scope, Prefix: token[:11]}
-		err := a.store.DB.QueryRow(r.Context(), "INSERT INTO agent_keys(id,workspace_id,name,prefix,token_hash,scope) VALUES($1,$2,$3,$4,$5,$6) RETURNING created_at", k.ID, workspace, k.Name, k.Prefix, hashToken(token), k.Scope).Scan(&k.CreatedAt)
+		if in.AccessMode == "" {
+			in.AccessMode = "single"
+		}
+		if (in.AccessMode != "single" && in.AccessMode != "selected" && in.AccessMode != "all") || (in.CanCreateWorkspaces && (in.Scope != "write" || in.AccessMode == "single")) || (in.AccessMode != "selected" && len(in.WorkspaceIDs) > 0) || len(in.WorkspaceIDs) > 500 {
+			fail(w, 400, "invalid workspace access or creation permission")
+			return
+		}
+		grants := []string{}
+		if in.AccessMode == "selected" {
+			seen := map[string]bool{workspace: true}
+			grants = append(grants, workspace)
+			for _, ws := range in.WorkspaceIDs {
+				if !core.ValidID(ws) {
+					fail(w, 400, "invalid workspace ID")
+					return
+				}
+				ws = strings.ToLower(ws)
+				if !seen[ws] {
+					grants = append(grants, ws)
+					seen[ws] = true
+				}
+			}
+		}
+		tx, err := a.store.DB.Begin(r.Context())
 		if err != nil {
 			a.failure(w, err)
 			return
 		}
+		defer tx.Rollback(r.Context())
+		for _, ws := range grants {
+			var exists bool
+			if err = tx.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id=$1::uuid)", ws).Scan(&exists); err != nil {
+				a.failure(w, err)
+				return
+			}
+			if !exists {
+				fail(w, 400, "workspace not found")
+				return
+			}
+		}
+		token := "ks_" + randomToken()
+		k := agentKey{ID: core.UUID(), Name: in.Name, Scope: in.Scope, Prefix: token[:11], AccessMode: in.AccessMode, WorkspaceIDs: grants, CanCreateWorkspaces: in.CanCreateWorkspaces}
+		err = tx.QueryRow(r.Context(), "INSERT INTO agent_keys(id,workspace_id,name,prefix,token_hash,scope,access_mode,can_create_workspaces) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING created_at", k.ID, workspace, k.Name, k.Prefix, hashToken(token), k.Scope, k.AccessMode, k.CanCreateWorkspaces).Scan(&k.CreatedAt)
+		if err != nil {
+			a.failure(w, err)
+			return
+		}
+		for _, ws := range grants {
+			if _, err = tx.Exec(r.Context(), "INSERT INTO agent_key_workspaces(key_id,workspace_id) VALUES($1,$2)", k.ID, ws); err != nil {
+				a.failure(w, err)
+				return
+			}
+		}
+		if err = tx.Commit(r.Context()); err != nil {
+			a.failure(w, err)
+			return
+		}
+
 		respond(w, 201, map[string]any{"key": k, "token": token})
 	case "DELETE":
 		id := r.PathValue("key")

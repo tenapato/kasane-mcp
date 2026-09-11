@@ -118,3 +118,87 @@ func TestRetryAndReindex(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestMovePreservesMemoryAndQueuesNewRevision(t *testing.T) {
+	s := testStore(t)
+	c := context.Background()
+	w1, _ := s.CreateWorkspace(c, "source")
+	w2, _ := s.CreateWorkspace(c, "target")
+	m, e := s.Remember(c, w1.ID, core.RememberInput{Title: "title", Content: "content", Tags: []string{"tag"}, Source: "source", IdempotencyKey: "create-key"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	got, e := s.Move(c, w1.ID, w2.ID, m.ID, 1)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if got.ID != m.ID || got.WorkspaceID != w2.ID || got.Title != m.Title || got.Content != m.Content || got.Revision != 2 || got.IndexedRevision != 0 {
+		t.Fatalf("move changed memory unexpectedly: %+v", got)
+	}
+	var idem *string
+	if e = s.DB.QueryRow(c, `SELECT idempotency_key FROM memories WHERE id=$1`, m.ID).Scan(&idem); e != nil {
+		t.Fatal(e)
+	}
+	if idem != nil {
+		t.Fatalf("idempotency key was not cleared: %q", *idem)
+	}
+	var rev int64
+	if e = s.DB.QueryRow(c, `SELECT revision FROM outbox WHERE memory_id=$1`, m.ID).Scan(&rev); e != nil || rev != 2 {
+		t.Fatalf("outbox revision: %d %v", rev, e)
+	}
+	if _, e = s.Remember(c, w2.ID, core.RememberInput{Title: "new", Content: "memory", IdempotencyKey: "create-key"}); e != nil {
+		t.Fatalf("cleared idempotency key still collides: %v", e)
+	}
+	if _, e = s.Move(c, w1.ID, w2.ID, m.ID, 1); !errors.Is(e, core.ErrConflict) {
+		t.Fatalf("stale move error: %v", e)
+	}
+}
+
+func TestCreateWorkspaceForKeyGrantsAccessWithoutChangingHome(t *testing.T) {
+	s := testStore(t)
+	c := context.Background()
+	home, _ := s.CreateWorkspace(c, "home")
+	var keyID string
+	if e := s.DB.QueryRow(c, `INSERT INTO agent_keys(id,workspace_id,name,prefix,token_hash,scope) VALUES(gen_random_uuid(),$1,'key','kas_','hash-create','write') RETURNING id::text`, home.ID).Scan(&keyID); e != nil {
+		t.Fatal(e)
+	}
+	w, e := s.CreateWorkspaceForKey(c, keyID, "created")
+	if e != nil {
+		t.Fatal(e)
+	}
+	var homeAfter, granted string
+	if e = s.DB.QueryRow(c, `SELECT workspace_id::text FROM agent_keys WHERE id=$1`, keyID).Scan(&homeAfter); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.DB.QueryRow(c, `SELECT workspace_id::text FROM agent_key_workspaces WHERE key_id=$1 AND workspace_id=$2`, keyID, w.ID).Scan(&granted); e != nil {
+		t.Fatal(e)
+	}
+	if homeAfter != home.ID || granted != w.ID {
+		t.Fatalf("home/grant mismatch: %s %s", homeAfter, granted)
+	}
+	if _, e = s.CreateWorkspaceForKey(c, "00000000-0000-0000-0000-000000000000", "missing"); !errors.Is(e, core.ErrNotFound) {
+		t.Fatalf("missing key error: %v", e)
+	}
+}
+
+func TestMoveEnforcesTargetProfileLimit(t *testing.T) {
+	s := testStore(t)
+	c := context.Background()
+	source, _ := s.CreateWorkspace(c, "source")
+	target, _ := s.CreateWorkspace(c, "target")
+	for i := 0; i < 100; i++ {
+		if _, e := s.Remember(c, target.ID, core.RememberInput{Title: "choice", Content: "Use Go", Kind: "stack"}); e != nil {
+			t.Fatal(e)
+		}
+	}
+	m, e := s.Remember(c, source.ID, core.RememberInput{Title: "choice", Content: "Use Rust", Kind: "practice"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = s.Move(c, source.ID, target.ID, m.ID, 1); !errors.Is(e, core.ErrInvalid) {
+		t.Fatalf("profile overflow move accepted: %v", e)
+	}
+	if _, e = s.Get(c, source.ID, m.ID); e != nil {
+		t.Fatalf("failed move changed source memory: %v", e)
+	}
+}
