@@ -75,7 +75,7 @@ func TestMigrationBackfillsLegacyKeyAccessOnRepeatedRuns(t *testing.T) {
 	if _, e = s.DB.Exec(ctx, `ALTER TABLE agent_keys DROP COLUMN access_mode, DROP COLUMN can_create_workspaces`); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.DB.Exec(ctx, `DELETE FROM schema_version WHERE version=2`); e != nil {
+	if _, e = s.DB.Exec(ctx, `DELETE FROM schema_version WHERE version>=2`); e != nil {
 		t.Fatal(e)
 	}
 	if e = s.Migrate(ctx); e != nil {
@@ -103,7 +103,7 @@ func TestMigrationBackfillsLegacyKeyAccessOnRepeatedRuns(t *testing.T) {
 	if e = s.DB.QueryRow(ctx, `SELECT max(version) FROM schema_version`).Scan(&version); e != nil {
 		t.Fatal(e)
 	}
-	if version != 2 {
-		t.Fatalf("schema version=%d, want 2", version)
+	if version != 4 {
+		t.Fatalf("schema version=%d, want 4", version)
 	}
 }

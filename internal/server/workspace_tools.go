@@ -36,9 +36,9 @@ func (a *App) workspacePrincipal(ctx context.Context, ws string, write bool) (id
 	allowed := false
 	switch id.AccessMode {
 	case "all":
-		allowed, err = a.store.WorkspaceExists(ctx, ws)
+		err = a.store.DB.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id=$1::uuid AND owner_username IS NOT DISTINCT FROM NULLIF($2,''))", ws, id.Username).Scan(&allowed)
 	case "selected":
-		err = a.store.DB.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM agent_key_workspaces WHERE key_id=$1 AND workspace_id=$2::uuid)", id.KeyID, ws).Scan(&allowed)
+		err = a.store.DB.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM agent_key_workspaces g JOIN workspaces w ON w.id=g.workspace_id WHERE key_id=$1 AND workspace_id=$2::uuid AND w.owner_username IS NOT DISTINCT FROM NULLIF($3,''))", id.KeyID, ws, id.Username).Scan(&allowed)
 	default:
 		allowed = ws == id.Workspace
 	}
@@ -74,7 +74,7 @@ func (a *App) addWorkspaceTools(s *mcp.Server) {
 		if err != nil {
 			return nil, workspacesResult{}, err
 		}
-		rows, err := a.store.DB.Query(ctx, `SELECT id::text,name,created_at FROM workspaces WHERE $1='all' OR ($1='single' AND id=$2::uuid) OR ($1='selected' AND EXISTS(SELECT 1 FROM agent_key_workspaces WHERE key_id=$3::uuid AND workspace_id=workspaces.id)) ORDER BY created_at,id`, id.AccessMode, id.Workspace, id.KeyID)
+		rows, err := a.store.DB.Query(ctx, `SELECT id::text,name,created_at FROM workspaces WHERE owner_username IS NOT DISTINCT FROM NULLIF($4,'') AND ($1='all' OR ($1='single' AND id=$2::uuid) OR ($1='selected' AND EXISTS(SELECT 1 FROM agent_key_workspaces WHERE key_id=$3::uuid AND workspace_id=workspaces.id))) ORDER BY created_at,id`, id.AccessMode, id.Workspace, id.KeyID, id.Username)
 		if err != nil {
 			return nil, workspacesResult{}, toolError(err)
 		}

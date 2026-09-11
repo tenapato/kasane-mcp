@@ -102,7 +102,7 @@ func (s *Store) CreateWorkspaceForKey(ctx context.Context, keyID, name string) (
 		return core.Workspace{}, core.ErrNotFound
 	}
 	var w core.Workspace
-	e = tx.QueryRow(ctx, `INSERT INTO workspaces(id,name) VALUES($1,$2) RETURNING id::text,name,created_at`, id, strings.TrimSpace(name)).Scan(&w.ID, &w.Name, &w.CreatedAt)
+	e = tx.QueryRow(ctx, `INSERT INTO workspaces(id,name,owner_username) VALUES($1,$2,(SELECT w.owner_username FROM agent_keys k JOIN workspaces w ON w.id=k.workspace_id WHERE k.id=$3::uuid)) RETURNING id::text,name,created_at`, id, strings.TrimSpace(name), keyID).Scan(&w.ID, &w.Name, &w.CreatedAt)
 	if e != nil {
 		return core.Workspace{}, e
 	}

@@ -8,6 +8,15 @@ import (
 //go:embed schema.sql
 var schema string
 
+//go:embed accounts.sql
+var accountsSchema string
+
+//go:embed invitations.sql
+var invitationsSchema string
+
+//go:embed usage.sql
+var usageSchema string
+
 func (s *Store) Migrate(ctx context.Context) error {
 	tx, e := s.DB.Begin(ctx)
 	if e != nil {
@@ -52,6 +61,25 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	if _, e = tx.Exec(ctx, `INSERT INTO schema_version(version) VALUES(2) ON CONFLICT DO NOTHING`); e != nil {
 		return e
+	}
+	if version == nil || *version < 3 {
+		if _, e = tx.Exec(ctx, accountsSchema); e != nil {
+			return e
+		}
+		if _, e = tx.Exec(ctx, invitationsSchema); e != nil {
+			return e
+		}
+		if _, e = tx.Exec(ctx, `INSERT INTO schema_version(version) VALUES(3) ON CONFLICT DO NOTHING`); e != nil {
+			return e
+		}
+	}
+	if version == nil || *version < 4 {
+		if _, e = tx.Exec(ctx, usageSchema); e != nil {
+			return e
+		}
+		if _, e = tx.Exec(ctx, `INSERT INTO schema_version(version) VALUES(4) ON CONFLICT DO NOTHING`); e != nil {
+			return e
+		}
 	}
 	return tx.Commit(ctx)
 }

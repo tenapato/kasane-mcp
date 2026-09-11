@@ -38,8 +38,8 @@ func validOrigin(r *http.Request, publicURL string) bool {
 }
 
 type identity struct {
-	Username, CSRF, Workspace, Scope, KeyID, AccessMode string
-	CanCreateWorkspaces                                 bool
+	Username, CSRF, Workspace, Scope, KeyID, AccessMode, Role string
+	CanCreateWorkspaces                                       bool
 }
 type identityKey struct{}
 
@@ -136,7 +136,10 @@ func Bootstrap(ctx context.Context, s *store.Store, username, password string) e
 	if count > 0 {
 		return errors.New("owner already exists; bootstrap cannot replace an account")
 	}
-	if _, err = tx.Exec(ctx, "INSERT INTO owners(username,password_hash) VALUES($1,$2)", username, string(hash)); err != nil {
+	if _, err = tx.Exec(ctx, "INSERT INTO owners(username,password_hash,role) VALUES($1,$2,'admin')", username, string(hash)); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, "UPDATE workspaces SET owner_username=$1 WHERE owner_username IS NULL", username); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -158,8 +161,8 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	var hash string
-	err := a.store.DB.QueryRow(r.Context(), "SELECT password_hash FROM owners WHERE username=$1", in.Username).Scan(&hash)
+	var hash, role string
+	err := a.store.DB.QueryRow(r.Context(), "SELECT password_hash,role FROM owners WHERE username=$1", in.Username).Scan(&hash, &role)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		a.failure(w, err)
 		return
@@ -191,7 +194,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: "kasane_session", Value: token, Path: "/", MaxAge: 86400, HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode})
-	respond(w, 200, map[string]any{"username": in.Username, "csrf_token": csrf})
+	respond(w, 200, map[string]any{"username": in.Username, "csrf_token": csrf, "role": role})
 }
 
 func (a *App) owner(next http.Handler) http.Handler {
@@ -202,7 +205,7 @@ func (a *App) owner(next http.Handler) http.Handler {
 			return
 		}
 		var id identity
-		err = a.store.DB.QueryRow(r.Context(), "SELECT username,csrf_token FROM sessions WHERE token_hash=$1 AND expires_at>now()", hashToken(cookie.Value)).Scan(&id.Username, &id.CSRF)
+		err = a.store.DB.QueryRow(r.Context(), "SELECT s.username,s.csrf_token,o.role FROM sessions s JOIN owners o ON o.username=s.username WHERE s.token_hash=$1 AND s.expires_at>now()", hashToken(cookie.Value)).Scan(&id.Username, &id.CSRF, &id.Role)
 		if errors.Is(err, pgx.ErrNoRows) {
 			fail(w, 401, "sign in required")
 			return
@@ -233,7 +236,7 @@ func (a *App) agent(next http.Handler) http.Handler {
 			return
 		}
 		var id identity
-		err := a.store.DB.QueryRow(r.Context(), "UPDATE agent_keys SET last_used_at=now() WHERE token_hash=$1 AND revoked_at IS NULL RETURNING workspace_id,scope,id::text,access_mode,can_create_workspaces", hashToken(strings.TrimPrefix(auth, "Bearer "))).Scan(&id.Workspace, &id.Scope, &id.KeyID, &id.AccessMode, &id.CanCreateWorkspaces)
+		err := a.store.DB.QueryRow(r.Context(), "UPDATE agent_keys SET last_used_at=now() WHERE token_hash=$1 AND revoked_at IS NULL RETURNING workspace_id,scope,id::text,access_mode,can_create_workspaces,COALESCE((SELECT owner_username FROM workspaces WHERE workspaces.id=agent_keys.workspace_id),'')", hashToken(strings.TrimPrefix(auth, "Bearer "))).Scan(&id.Workspace, &id.Scope, &id.KeyID, &id.AccessMode, &id.CanCreateWorkspaces, &id.Username)
 		if errors.Is(err, pgx.ErrNoRows) {
 			fail(w, 401, "valid agent key required")
 			return
@@ -343,7 +346,7 @@ func (a *App) keys(w http.ResponseWriter, r *http.Request) {
 		defer tx.Rollback(r.Context())
 		for _, ws := range grants {
 			var exists bool
-			if err = tx.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id=$1::uuid)", ws).Scan(&exists); err != nil {
+			if err = tx.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id=$1::uuid AND owner_username IS NOT DISTINCT FROM (SELECT owner_username FROM workspaces WHERE id=$2::uuid))", ws, workspace).Scan(&exists); err != nil {
 				a.failure(w, err)
 				return
 			}

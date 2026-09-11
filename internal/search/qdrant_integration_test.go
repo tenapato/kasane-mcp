@@ -30,6 +30,10 @@ func TestQdrantIntegration(t *testing.T) {
 	if err != nil || len(other) != 0 {
 		t.Fatalf("workspace leak: %+v %v", other, err)
 	}
+	points, err := q.Vectors(ctx, []string{m.ID})
+	if err != nil || len(points[m.ID].Vector["keywords"].Indices) == 0 || points[m.ID].Payload.WorkspaceID != m.WorkspaceID || points[m.ID].Payload.Revision != 1 {
+		t.Fatalf("vector retrieval failed: %+v %v", points, err)
+	}
 	m.Deleted = true
 	if err := q.Apply(ctx, m); err != nil {
 		t.Fatal(err)
