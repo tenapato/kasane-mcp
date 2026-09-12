@@ -205,6 +205,10 @@ func (a *App) Handler() http.Handler {
 		}
 		respond(w, 200, map[string]bool{"ok": true})
 	})
+	auth("GET /api/v1/overview", a.overview)
+	auth("GET /api/v1/overview/usage", a.overviewUsage)
+	auth("GET /api/v1/overview/memories", a.overviewMemories)
+	auth("GET /api/v1/overview/map", a.overviewMap)
 	auth("GET /api/v1/status", a.status)
 	mux.HandleFunc("POST /api/v1/waitlist", a.joinWaitlist)
 	mux.HandleFunc("POST /api/v1/invitations/accept", a.acceptInvitation)
