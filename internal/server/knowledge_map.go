@@ -5,10 +5,10 @@ import (
 	"github.com/tenapato/kasane-mcp/internal/search"
 	"net/http"
 	"sort"
-	"strings"
 )
 
 type mapNode struct {
+	WorkspaceID    string                `json:"workspace_id"`
 	ID             string                `json:"id"`
 	Title          string                `json:"title"`
 	Kind           string                `json:"kind"`
@@ -31,12 +31,16 @@ type mapResult struct {
 }
 
 func (a *App) knowledgeMap(w http.ResponseWriter, r *http.Request) {
-	ws := strings.ToLower(r.PathValue("workspace"))
+	ws := r.PathValue("workspace")
 	records, err := a.store.List(r.Context(), ws, core.SearchInput{Limit: 50})
 	if err != nil {
 		a.failure(w, err)
 		return
 	}
+	a.renderKnowledgeMap(w, r, records)
+}
+func (a *App) renderKnowledgeMap(w http.ResponseWriter, r *http.Request, records core.SearchResult) {
+	var err error
 	out := mapResult{Nodes: []mapNode{}, Edges: []mapEdge{}, Total: records.Total, Limit: 50}
 	ids := []string{}
 	for _, m := range records.Memories {
@@ -53,11 +57,11 @@ func (a *App) knowledgeMap(w http.ResponseWriter, r *http.Request) {
 	}
 	vectors := map[string]map[uint32]float64{}
 	for _, m := range records.Memories {
-		node := mapNode{ID: m.ID, Title: m.Title, Kind: m.Kind, Tags: m.Tags, IndexingStatus: "pending", Weights: []search.VectorWeight{}}
+		node := mapNode{ID: m.ID, WorkspaceID: m.WorkspaceID, Title: m.Title, Kind: m.Kind, Tags: m.Tags, IndexingStatus: "pending", Weights: []search.VectorWeight{}}
 		if out.Degraded {
 			node.IndexingStatus = "unavailable"
 		}
-		if p, ok := points[m.ID]; ok && p.Payload.WorkspaceID == ws && p.Payload.Revision == m.Revision && m.IndexedRevision == m.Revision {
+		if p, ok := points[m.ID]; ok && p.Payload.WorkspaceID == m.WorkspaceID && p.Payload.Revision == m.Revision && m.IndexedRevision == m.Revision {
 			vector := p.Vector["keywords"]
 			normalized := vector.Normalized()
 			// Empty vectors can be valid for punctuation-only memories; they have no edges.

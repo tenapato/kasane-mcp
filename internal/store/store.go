@@ -373,11 +373,17 @@ func (s *Store) Forget(ctx context.Context, ws, id string) error {
 }
 
 func (s *Store) List(ctx context.Context, ws string, in core.SearchInput) (core.SearchResult, error) {
+	return s.listWhere(ctx, in, []any{ws}, []string{"workspace_id=$1::uuid", "deleted=false"})
+}
+
+// ListFor reads only workspaces owned by the authenticated account.
+func (s *Store) ListFor(ctx context.Context, username string, in core.SearchInput) (core.SearchResult, error) {
+	return s.listWhere(ctx, in, []any{username}, []string{"workspace_id IN (SELECT id FROM workspaces WHERE owner_username=$1)", "deleted=false"})
+}
+func (s *Store) listWhere(ctx context.Context, in core.SearchInput, args []any, where []string) (core.SearchResult, error) {
 	if e := in.Validate(); e != nil {
 		return core.SearchResult{}, e
 	}
-	args := []any{ws}
-	where := []string{"workspace_id=$1::uuid", "deleted=false"}
 	if in.Kind != "" {
 		args = append(args, in.Kind)
 		where = append(where, fmt.Sprintf("kind=$%d", len(args)))

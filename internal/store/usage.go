@@ -36,10 +36,17 @@ func (s *Store) RecordContextUsage(ctx context.Context, ws string, fullCharacter
 	return err
 }
 func (s *Store) Usage(ctx context.Context, ws string) (UsageReport, error) {
+	return s.usageWhere(ctx, "workspace_id=$1::uuid", ws)
+}
+func (s *Store) UsageFor(ctx context.Context, username string) (UsageReport, error) {
+	return s.usageWhere(ctx, "workspace_id IN (SELECT id FROM workspaces WHERE owner_username=$1)", username)
+}
+func (s *Store) usageWhere(ctx context.Context, scope, value string) (UsageReport, error) {
 	out := UsageReport{Days: 30, Daily: []UsageDay{}}
 	rows, err := s.DB.Query(ctx, `SELECT to_char(d.day,'YYYY-MM-DD'),COALESCE(u.retrievals,0),COALESCE(u.baseline_tokens,0),COALESCE(u.returned_tokens,0),COALESCE(u.saved_tokens,0)
  FROM generate_series((now() AT TIME ZONE 'UTC')::date-29,(now() AT TIME ZONE 'UTC')::date,interval '1 day') AS d(day)
- LEFT JOIN workspace_usage_daily u ON u.day=d.day::date AND u.workspace_id=$1::uuid ORDER BY d.day`, ws)
+ LEFT JOIN (SELECT day,SUM(retrievals) AS retrievals,SUM(baseline_tokens) AS baseline_tokens,SUM(returned_tokens) AS returned_tokens,SUM(saved_tokens) AS saved_tokens
+ FROM workspace_usage_daily WHERE `+scope+` AND day >= (now() AT TIME ZONE 'UTC')::date-29 GROUP BY day) u ON u.day=d.day::date ORDER BY d.day`, value)
 	if err != nil {
 		return out, err
 	}

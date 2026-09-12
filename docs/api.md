@@ -76,3 +76,14 @@ These figures measure context trimming, not actual model tokenization, avoided r
 Vectors are retrieved from Qdrant's stored `keywords` sparse vectors. The API rejects vectors whose workspace or revision differs from the canonical PostgreSQL record, or whose record has not completed indexing. Connections use cosine similarity of the raw sparse weights, keeping each node's three strongest neighbors at similarity 0.15 or higher (the union of those choices). This is an exploratory keyword network, not a semantic embedding projection or Qdrant's IDF-adjusted search ranking. Numeric dimensions are keyword identifiers, not readable words. Display coordinates are illustrative.
 
 If Qdrant is unavailable, nodes remain visible with unavailable indexing states and no fabricated connections. Partially available batches can still provide verified connections while `degraded` is true. Empty and pending vectors have no connections. Use the ordinary memory endpoint to read a selected node's full current content.
+
+## All-workspaces overview
+
+The authenticated browser API can combine the signed-in user's workspaces. Administrator status does not grant access to another user's overview or data.
+
+- `GET /api/v1/overview` returns `workspaces` and the live `memory_count` across them.
+- `GET /api/v1/overview/usage` returns the same 30-day UTC report as workspace usage, summing all owned workspaces by day. Each retrieval is counted once in its original workspace.
+- `GET /api/v1/overview/memories` accepts `q`, `tag`, `kind`, `limit` (up to 50), and `offset`. It returns the ordinary memory search result with each record's `workspace_id`. Search uses PostgreSQL keyword matching; the total reflects the active filters.
+- `GET /api/v1/overview/map` samples the 50 most recently updated memories across all owned workspaces. Nodes include `workspace_id`; connections may span those workspaces. The vector freshness checks and similarity method are identical to the workspace map.
+
+The overview is read-only. Use a record's ordinary workspace endpoint to open or change it; those endpoints enforce workspace ownership independently.
