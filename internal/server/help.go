@@ -19,6 +19,9 @@ Call kasane_remember with {"title":"Backend language","content":"The backend use
 Update a memory:
 Get it first, then call kasane_remember with its id, expected_revision, title, content, kind, tags, and source. Updates replace these fields: resend all current values you want preserved. Omitting kind resets it to memory; omitting tags or source clears them. On a revision conflict, read again and reconcile the change. Reuse the same idempotency_key when retrying a create.
 
+Optional relevance selection:
+Call kasane_relevance with {"task":"Update HTTP handling","paths":["src/http.go"],"rules":[{"id":"PRACTICE_ID","required":true}]} after selecting saved practice IDs. Include workspace_id for multi-workspace keys. The backend resolves exact saved text under your workspace access. Scope paths and required flags apply only to this request, not saved settings. Coverage covers only the supplied candidates. Baseline results are keyword selection, not trained probabilities. On errors retain conventions; this is not a violation or compliance check and does not automatically run for every agent action. Input is sent to the configured decision service only when explicitly invoked; it is not training consent.
+
 Other tools:
 - kasane_workspaces: {} lists only accessible projects and your permissions.
 - kasane_workspace_create: {"name":"New app"} creates a project if the key has write and workspace creation permission. Selected keys automatically gain access to projects they create. Do not blindly retry an ambiguous create response: list projects first to avoid duplicates.

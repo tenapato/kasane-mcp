@@ -1,0 +1,35 @@
+# Optional local decision baseline, on the same private Compose network as Kasane.
+# Run with: docker compose -f compose.yaml -f compose.decision.yaml up --build -d
+services:
+  app:
+    environment:
+      DECISION_API_URL: http://decision-api:8080
+      DECISION_API_TOKEN: ""
+      DECISION_API_TOKEN_FILE: /run/secrets/decision_token
+    secrets:
+      - decision_token
+    depends_on:
+      decision-api:
+        condition: service_healthy
+  decision-api:
+    build:
+      context: ${DECISION_API_SOURCE:-../../kasane-decision-api}
+    environment:
+      DECISION_MODE: baseline
+      DECISION_BIND: 0.0.0.0:8080
+      DECISION_TOKEN_FILE: /run/secrets/decision_token
+    secrets:
+      - decision_token
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,noexec,nosuid
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 2
+    restart: unless-stopped
+secrets:
+  decision_token:
+    file: ${DECISION_TOKEN_PATH:?Set DECISION_TOKEN_PATH to a private token file}

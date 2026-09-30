@@ -4,3 +4,7 @@
 web
 tmp
 *.log
+
+secrets
+.cache
+/kasane

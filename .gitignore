@@ -15,3 +15,5 @@ Dockerfile.web
 compose.web.yaml
 docs/implementation.md
 docs/store-contract.md
+
+secrets/

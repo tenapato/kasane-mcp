@@ -157,3 +157,10 @@ The bootstrap account is the instance administrator. Public account creation req
 Acceptance creates a regular account and a private **Personal** workspace. Users can create additional project workspaces. Workspaces, memories, keys, and usage counts are private to their user. Even the instance administrator cannot browse another user's project data. An agent key with all-workspaces access covers only the key owner's current and future workspaces.
 
 On upgrade, migrations assign existing workspaces to the original administrator and retain existing agent keys. Deploy the backend before the updated web UI, then sign in again or reload to receive your role. No new environment variables are required. Behind a reverse proxy, configure `TRUSTED_PROXY_CIDRS` with only your controlled proxy networks so public signup rate limits use the actual client IP.
+
+## Optional decision API
+
+Connect the standalone relevance baseline to the panel and `kasane_relevance`
+MCP tool using [the decision API setup guide](docs/decision-api.md). The connection
+is disabled by default, keeps credentials server-side, and does not enable training
+or violation detection. A connected private-network Compose overlay is included.
