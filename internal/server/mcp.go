@@ -124,6 +124,7 @@ func (a *App) mcpHandler() http.Handler {
 		return nil, out, nil
 	})
 	a.addWorkspaceTools(s)
+	a.addDecisionTool(s)
 	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, MaxRequestBodyBytes: 1 << 20, DisableLocalhostProtection: true})
 	// Host and Origin are validated by App, including localhost reverse proxies.
 }

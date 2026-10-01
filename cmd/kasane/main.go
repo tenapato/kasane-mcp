@@ -111,7 +111,15 @@ func run() error {
 		return nil
 	}
 	q := search.NewQdrant(env("QDRANT_URL", "http://localhost:6333"), os.Getenv("QDRANT_API_KEY"))
-	app, e := server.New(s, q, server.Config{MCPPublicURL: os.Getenv("MCP_PUBLIC_URL"), PublicURL: env("PUBLIC_URL", "http://localhost:9090"), WebDir: os.Getenv("WEB_DIR"), TrustedProxyCIDRs: os.Getenv("TRUSTED_PROXY_CIDRS")})
+	decisionToken := os.Getenv("DECISION_API_TOKEN")
+	if path := os.Getenv("DECISION_API_TOKEN_FILE"); path != "" {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("cannot read DECISION_API_TOKEN_FILE")
+		}
+		decisionToken = strings.TrimRight(string(b), "\r\n")
+	}
+	app, e := server.New(s, q, server.Config{DecisionAPIURL: os.Getenv("DECISION_API_URL"), DecisionAPIToken: decisionToken, MCPPublicURL: os.Getenv("MCP_PUBLIC_URL"), PublicURL: env("PUBLIC_URL", "http://localhost:9090"), WebDir: os.Getenv("WEB_DIR"), TrustedProxyCIDRs: os.Getenv("TRUSTED_PROXY_CIDRS")})
 	if e != nil {
 		return e
 	}

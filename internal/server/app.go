@@ -17,13 +17,15 @@ import (
 	"time"
 
 	"github.com/tenapato/kasane-mcp/internal/core"
+	"github.com/tenapato/kasane-mcp/internal/decision"
 	"github.com/tenapato/kasane-mcp/internal/search"
 	"github.com/tenapato/kasane-mcp/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
 
-type Config struct{ PublicURL, MCPPublicURL, WebDir, TrustedProxyCIDRs string }
+type Config struct{ PublicURL, MCPPublicURL, WebDir, TrustedProxyCIDRs, DecisionAPIURL, DecisionAPIToken string }
 type App struct {
+	decision     *decision.Client
 	store        *store.Store
 	index        *search.Qdrant
 	search       *search.Service
@@ -35,6 +37,11 @@ type App struct {
 }
 
 func New(s *store.Store, index *search.Qdrant, cfg Config) (*App, error) {
+	client, err := decision.New(cfg.DecisionAPIURL, cfg.DecisionAPIToken)
+	if err != nil {
+		return nil, err
+	}
+	cfg.DecisionAPIToken = ""
 	cfg.PublicURL = strings.TrimRight(cfg.PublicURL, "/")
 	cfg.MCPPublicURL = strings.TrimRight(cfg.MCPPublicURL, "/")
 	if cfg.MCPPublicURL == "" {
@@ -53,7 +60,7 @@ func New(s *store.Store, index *search.Qdrant, cfg Config) (*App, error) {
 		}
 	}
 	u, _ := url.Parse(cfg.PublicURL)
-	a := &App{store: s, index: index, search: &search.Service{Repo: s, Index: index}, cfg: cfg, secure: u.Scheme == "https", loginLimiter: newLimiter()}
+	a := &App{decision: client, store: s, index: index, search: &search.Service{Repo: s, Index: index}, cfg: cfg, secure: u.Scheme == "https", loginLimiter: newLimiter()}
 	for _, s := range strings.Split(cfg.TrustedProxyCIDRs, ",") {
 		if s = strings.TrimSpace(s); s != "" {
 			p, e := netip.ParsePrefix(s)
@@ -188,6 +195,8 @@ func (a *App) Handler() http.Handler {
 			fn(w, r)
 		})
 	}
+	workspace("GET /api/v1/workspaces/{workspace}/decision/status", a.decisionStatus)
+	workspace("POST /api/v1/workspaces/{workspace}/decision/relevance", a.decisionRelevance)
 	workspace("GET /api/v1/workspaces/{workspace}/map", a.knowledgeMap)
 	workspace("GET /api/v1/workspaces/{workspace}/usage", a.usage)
 	workspace("GET /api/v1/workspaces/{workspace}/memories", a.memories)
