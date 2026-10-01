@@ -195,6 +195,8 @@ func (a *App) Handler() http.Handler {
 			fn(w, r)
 		})
 	}
+	auth("GET /api/v1/decision/status", a.decisionGlobalStatus)
+	auth("POST /api/v1/decision/check", a.decisionCheck)
 	workspace("GET /api/v1/workspaces/{workspace}/decision/status", a.decisionStatus)
 	workspace("POST /api/v1/workspaces/{workspace}/decision/relevance", a.decisionRelevance)
 	workspace("GET /api/v1/workspaces/{workspace}/map", a.knowledgeMap)

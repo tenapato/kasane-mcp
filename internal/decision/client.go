@@ -85,13 +85,67 @@ func (c *Client) Status(ctx context.Context) string {
 	}
 	return "ready"
 }
+
+// Check sends a fixed, public request that proves authenticated relevance works.
+// It never includes a workspace, saved practice, user text, or local file content.
+func (c *Client) Check(ctx context.Context) (status, mode, decisionID string) {
+	if c == nil {
+		return "disabled", "", ""
+	}
+	in := Request{
+		Task:  "Diagnostic: retain the required convention for this synthetic request.",
+		Rules: []Rule{{ID: "kaname-diagnostic-required", Text: "Keep this required diagnostic convention.", Required: true}},
+	}
+	out, state := c.relevance(ctx, in)
+	if state == "unauthorized" {
+		return "unauthorized", "", ""
+	}
+	if state == "invalid_response" {
+		return "invalid_response", "", ""
+	}
+	if state != "ready" {
+		return "unavailable", "", ""
+	}
+	// A response ID is opaque metadata, never a channel for upstream text.
+	if !safeDiagnosticID(out.DecisionID) {
+		return "invalid_response", "", ""
+	}
+	return "ready", out.Mode, out.DecisionID
+}
+
+func safeDiagnosticID(id string) bool {
+	if len(id) == 0 || len(id) > 128 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.') {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *Client) Relevance(ctx context.Context, in Request) (Response, error) {
+	out, state := c.relevance(ctx, in)
+	switch state {
+	case "ready":
+		return out, nil
+	case "invalid_request":
+		return Response{}, ErrInvalid
+	default:
+		return Response{}, ErrUnavailable
+	}
+}
+
+// relevance is shared by the workspace API and synthetic diagnostic. The public
+// Relevance method keeps its existing two-error contract.
+func (c *Client) relevance(ctx context.Context, in Request) (Response, string) {
 	var out Response
 	if c == nil {
-		return out, ErrUnavailable
+		return out, "unavailable"
 	}
 	if strings.TrimSpace(in.Task) == "" || len(in.Task) > 16384 || len(in.Paths) > 64 || len(in.Rules) == 0 || len(in.Rules) > 64 || (in.Context != nil && len(*in.Context) > 65536) {
-		return out, ErrInvalid
+		return out, "invalid_request"
 	}
 	if in.Paths == nil {
 		in.Paths = []string{}
@@ -103,39 +157,42 @@ func (c *Client) Relevance(ctx context.Context, in Request) (Response, error) {
 			r.Paths = []string{}
 		}
 		if seen[r.ID] || r.ID == "" || len(r.ID) > 256 || strings.TrimSpace(r.Text) == "" || len(r.Text) > 8192 || len(r.Paths) > 64 {
-			return out, ErrInvalid
+			return out, "invalid_request"
 		}
 		seen[r.ID] = true
 	}
 	body, e := json.Marshal(in)
 	if e != nil || len(body) > 1<<20 {
-		return out, ErrInvalid
+		return out, "invalid_request"
 	}
 	req, e := http.NewRequestWithContext(ctx, http.MethodPost, c.origin+"/v1/relevance", bytes.NewReader(body))
 	if e != nil {
-		return out, ErrUnavailable
+		return out, "unavailable"
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 	res, e := c.http.Do(req)
 	if e != nil {
-		return out, ErrUnavailable
+		return out, "unavailable"
 	}
 	defer res.Body.Close()
+	if res.StatusCode == 401 || res.StatusCode == 403 {
+		return out, "unauthorized"
+	}
 	if res.StatusCode == 400 || res.StatusCode == 413 {
-		return out, ErrInvalid
+		return out, "invalid_request"
 	}
 	if res.StatusCode != 200 {
-		return out, ErrUnavailable
+		return out, "unavailable"
 	}
 	b, e := io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
 	if e != nil || len(b) > 1<<20 {
-		return out, ErrUnavailable
+		return out, "invalid_response"
 	}
 	if json.Unmarshal(b, &out) != nil || !completeResponse(b) || !validResponse(out, in) {
-		return Response{}, ErrUnavailable
+		return Response{}, "invalid_response"
 	}
-	return out, nil
+	return out, "ready"
 }
 func validResponse(out Response, in Request) bool {
 	if out.DecisionID == "" || (out.Mode != "baseline" && out.Mode != "model") || (out.Coverage != "complete" && out.Coverage != "partial") || len(out.Decisions) != len(in.Rules) {

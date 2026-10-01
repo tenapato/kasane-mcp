@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/tenapato/kasane-mcp/internal/core"
@@ -60,6 +61,31 @@ func (a *App) relevance(ctx context.Context, workspace string, in relevanceInput
 	out.Response = result
 	return out, nil
 }
+
+type decisionDiagnostic struct {
+	Status     string  `json:"status"`
+	Check      string  `json:"check"`
+	CheckedAt  string  `json:"checked_at"`
+	LatencyMS  float64 `json:"latency_ms"`
+	Mode       string  `json:"mode,omitempty"`
+	DecisionID string  `json:"decision_id,omitempty"`
+}
+
+func (a *App) decisionGlobalStatus(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	status := a.decision.Status(r.Context())
+	respond(w, 200, decisionDiagnostic{Status: status, Check: "readiness",
+		CheckedAt: time.Now().UTC().Format(time.RFC3339Nano), LatencyMS: float64(time.Since(started).Microseconds()) / 1000})
+}
+
+func (a *App) decisionCheck(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	status, mode, id := a.decision.Check(r.Context())
+	respond(w, 200, decisionDiagnostic{Status: status, Check: "authenticated",
+		CheckedAt: time.Now().UTC().Format(time.RFC3339Nano), LatencyMS: float64(time.Since(started).Microseconds()) / 1000,
+		Mode: mode, DecisionID: id})
+}
+
 func (a *App) decisionStatus(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, map[string]string{"status": a.decision.Status(r.Context())})
 }

@@ -33,6 +33,21 @@ service. The URL must be reachable from the backend. `/readyz` readiness appears
 in the panel, but a successful authenticated relevance call is the credential
 check. Readiness alone does not verify the token.
 
+## Connection diagnostics
+
+The signed-in panel can call `GET /api/v1/decision/status` to check service
+readiness and `POST /api/v1/decision/check` with the normal session CSRF token to
+verify an authenticated relevance decision. The POST sends one fixed synthetic
+task and one required synthetic rule. It reads no workspace records, never sends
+private content, and creates no feedback or training data. A `ready` GET means
+only that `/readyz` is reachable; it does not verify the service token.
+
+Both endpoints return `status`, `check`, `checked_at`, and `latency_ms`. A successful
+POST also returns `mode` (`baseline` or `model`) and `decision_id`. Downstream
+failures use `disabled`, `unavailable`, `unauthorized`, or `invalid_response` in a
+200 JSON response, so a service-side 401 cannot sign the browser out. The
+workspace status endpoint remains available for existing clients.
+
 ## Run a connected local baseline with Compose
 
 `compose.decision.yaml` adds the decision API to the backend's private Compose
