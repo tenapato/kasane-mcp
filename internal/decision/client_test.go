@@ -150,3 +150,103 @@ func TestMalformedResponseContract(t *testing.T) {
 		t.Fatal("control character token accepted")
 	}
 }
+
+func TestSyntheticCheck(t *testing.T) {
+	var calls int
+	mode := "unauthorized"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/readyz" {
+			w.WriteHeader(200)
+			return
+		}
+		calls++
+		if r.URL.Path != "/v1/relevance" || r.Method != http.MethodPost {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var in Request
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || len(in.Rules) != 1 ||
+			in.Rules[0].ID != "kaname-diagnostic-required" || !in.Rules[0].Required ||
+			in.Paths == nil || in.Rules[0].Paths == nil || in.Context != nil ||
+			strings.Contains(strings.ToLower(in.Task), "workspace") {
+			t.Errorf("invalid synthetic payload: %+v, %v", in, err)
+		}
+		if mode == "redirect" {
+			http.Redirect(w, r, "http://127.0.0.1:1", http.StatusFound)
+			return
+		}
+		if mode == "unavailable" {
+			w.WriteHeader(500)
+			_, _ = w.Write([]byte("private downstream text"))
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer "+strings.Repeat("s", 32) || mode == "unauthorized" {
+			w.WriteHeader(401)
+			return
+		}
+		if mode == "malformed" {
+			_, _ = w.Write([]byte(`{"decision_id":"bad"}`))
+			return
+		}
+		if mode == "oversized" {
+			_, _ = w.Write([]byte(strings.Repeat("x", (1<<20)+1)))
+			return
+		}
+		response := Response{DecisionID: "diagnostic-1", Mode: mode, Coverage: "complete",
+			Decisions: []Decision{{RuleID: in.Rules[0].ID, Include: true, Reason: "required"}}}
+		if mode == "suppressed" {
+			response.Mode = "baseline"
+			response.Decisions[0].Include = false
+		}
+		if mode == "unsafe-id" {
+			response.Mode = "baseline"
+			response.DecisionID = "private downstream text"
+		}
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer srv.Close()
+	client, err := New(srv.URL, strings.Repeat("s", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := client.Status(context.Background()); got != "ready" {
+		t.Fatal(got)
+	}
+	if calls != 0 {
+		t.Fatal("readiness invoked authenticated endpoint")
+	}
+	if got, _, _ := client.Check(context.Background()); got != "unauthorized" {
+		t.Fatal(got)
+	}
+	for _, test := range []struct{ upstream, want string }{
+		{"baseline", "ready"}, {"model", "ready"},
+		{"malformed", "invalid_response"}, {"suppressed", "invalid_response"},
+		{"oversized", "invalid_response"}, {"unsafe-id", "invalid_response"},
+		{"redirect", "unavailable"}, {"unavailable", "unavailable"},
+	} {
+		mode = test.upstream
+		status, resultMode, id := client.Check(context.Background())
+		if status != test.want {
+			t.Fatalf("%s: got %s, want %s", test.upstream, status, test.want)
+		}
+		if test.want == "ready" && (resultMode != test.upstream || id != "diagnostic-1") {
+			t.Fatalf("%s: missing valid mode/ID: %q %q", test.upstream, resultMode, id)
+		}
+		if test.want != "ready" && (resultMode != "" || id != "") {
+			t.Fatalf("%s: exposed metadata on failure", test.upstream)
+		}
+	}
+	mode = "baseline"
+	wrong, _ := New(srv.URL, strings.Repeat("w", 32))
+	if got, _, _ := wrong.Check(context.Background()); got != "unauthorized" {
+		t.Fatal(got)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got, _, _ := client.Check(ctx); got != "unavailable" {
+		t.Fatal(got)
+	}
+	var disabled *Client
+	if got, _, _ := disabled.Check(context.Background()); got != "disabled" {
+		t.Fatal(got)
+	}
+}

@@ -167,3 +167,139 @@ func TestDecisionLiveService(t *testing.T) {
 		}
 	}
 }
+
+func TestDecisionDiagnosticSessionRoutes(t *testing.T) {
+	store := testStore(t)
+	if err := Bootstrap(context.Background(), store, "diagnostic-owner", "integration-password"); err != nil {
+		t.Fatal(err)
+	}
+	mode := "ready"
+	var upstreamCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		if r.URL.Path == "/readyz" {
+			w.WriteHeader(200)
+			return
+		}
+		if r.URL.Path != "/v1/relevance" {
+			t.Errorf("unexpected upstream path: %s", r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+		if mode == "unauthorized" {
+			w.WriteHeader(401)
+			_, _ = w.Write([]byte("secret service message"))
+			return
+		}
+		var request decision.Request
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || len(request.Rules) != 1 ||
+			!request.Rules[0].Required || request.Context != nil || len(request.Paths) != 0 {
+			t.Errorf("diagnostic sent non-synthetic request: %+v, %v", request, err)
+		}
+		if mode == "malformed" {
+			_, _ = w.Write([]byte(`{"unexpected":"private"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(decision.Response{DecisionID: "diagnostic-1", Mode: map[string]string{"ready": "baseline", "model": "model"}[mode],
+			Coverage: "complete", Decisions: []decision.Decision{{RuleID: request.Rules[0].ID, Include: true, Reason: "required"}}})
+	}))
+	defer upstream.Close()
+	app, err := New(store, nil, Config{PublicURL: "http://localhost", DecisionAPIURL: upstream.URL,
+		DecisionAPIToken: strings.Repeat("s", 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := app.Handler()
+	for _, endpoint := range []string{"/api/v1/decision/status", "/api/v1/decision/check"} {
+		method := http.MethodGet
+		if strings.HasSuffix(endpoint, "/check") {
+			method = http.MethodPost
+		}
+		req := httptest.NewRequest(method, "http://localhost"+endpoint, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != 401 {
+			t.Fatalf("unauthenticated %s: %d", endpoint, rec.Code)
+		}
+	}
+	if upstreamCalls.Load() != 0 {
+		t.Fatal("unauthenticated diagnostics contacted service")
+	}
+	login := httptest.NewRequest(http.MethodPost, "http://localhost/api/v1/login",
+		strings.NewReader(`{"username":"diagnostic-owner","password":"integration-password"}`))
+	login.Header.Set("Origin", "http://localhost")
+	loginResponse := httptest.NewRecorder()
+	handler.ServeHTTP(loginResponse, login)
+	if loginResponse.Code != 200 {
+		t.Fatalf("login: %d %s", loginResponse.Code, loginResponse.Body.String())
+	}
+	var identity map[string]string
+	if err := json.Unmarshal(loginResponse.Body.Bytes(), &identity); err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginResponse.Result().Cookies()[0]
+	call := func(method, endpoint, origin, csrf string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "http://localhost"+endpoint, nil)
+		req.AddCookie(cookie)
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		if csrf != "" {
+			req.Header.Set("X-CSRF-Token", csrf)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+	status := call(http.MethodGet, "/api/v1/decision/status", "", "")
+	if status.Code != 200 {
+		t.Fatalf("readiness: %d", status.Code)
+	}
+	var ready decisionDiagnostic
+	if err := json.Unmarshal(status.Body.Bytes(), &ready); err != nil || ready.Status != "ready" || ready.Check != "readiness" || ready.Mode != "" || ready.DecisionID != "" || ready.CheckedAt == "" {
+		t.Fatalf("bad readiness: %s, %v", status.Body.String(), err)
+	}
+	before := upstreamCalls.Load()
+	for _, pair := range [][2]string{{"", ""}, {"http://wrong.example", identity["csrf_token"]}, {"http://localhost", "wrong"}} {
+		result := call(http.MethodPost, "/api/v1/decision/check", pair[0], pair[1])
+		if result.Code != 403 {
+			t.Fatalf("CSRF/origin not enforced: %d", result.Code)
+		}
+	}
+	if upstreamCalls.Load() != before {
+		t.Fatal("invalid CSRF contacted service")
+	}
+	for _, tc := range []struct{ upstream, want string }{{"ready", "ready"}, {"model", "ready"},
+		{"unauthorized", "unauthorized"}, {"malformed", "invalid_response"}} {
+		mode = tc.upstream
+		result := call(http.MethodPost, "/api/v1/decision/check", "http://localhost", identity["csrf_token"])
+		if result.Code != 200 {
+			t.Fatalf("%s: browser HTTP status %d", tc.upstream, result.Code)
+		}
+		var diagnostic decisionDiagnostic
+		if err := json.Unmarshal(result.Body.Bytes(), &diagnostic); err != nil || diagnostic.Status != tc.want ||
+			diagnostic.Check != "authenticated" || diagnostic.CheckedAt == "" || diagnostic.LatencyMS < 0 {
+			t.Fatalf("%s: bad diagnostic %s, %v", tc.upstream, result.Body.String(), err)
+		}
+		if tc.want == "ready" && (diagnostic.Mode == "" || diagnostic.DecisionID != "diagnostic-1") {
+			t.Fatalf("%s: missing success metadata", tc.upstream)
+		}
+		if tc.want != "ready" && (diagnostic.Mode != "" || diagnostic.DecisionID != "" || strings.Contains(result.Body.String(), "secret")) {
+			t.Fatalf("%s: leaked upstream detail: %s", tc.upstream, result.Body.String())
+		}
+	}
+	disabled, err := New(store, nil, Config{PublicURL: "http://localhost"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "http://localhost/api/v1/decision/check", nil)
+	req.AddCookie(cookie)
+	req.Header.Set("Origin", "http://localhost")
+	req.Header.Set("X-CSRF-Token", identity["csrf_token"])
+	rec := httptest.NewRecorder()
+	disabled.Handler().ServeHTTP(rec, req)
+	var diagnostic decisionDiagnostic
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &diagnostic) != nil || diagnostic.Status != "disabled" {
+		t.Fatalf("disabled diagnostic: %d %s", rec.Code, rec.Body.String())
+	}
+}
