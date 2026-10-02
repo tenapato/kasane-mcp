@@ -164,3 +164,10 @@ Connect the standalone relevance baseline to the panel and `kasane_relevance`
 MCP tool using [the decision API setup guide](docs/decision-api.md). The connection
 is disabled by default, keeps credentials server-side, and does not enable training
 or violation detection. A connected private-network Compose overlay is included.
+
+### Kaname evaluation contributions
+
+Agents can submit independent relevance labels through `kasane_relevance_evaluate`
+when `DECISION_FEEDBACK_RETENTION_DAYS` is enabled on the backend. Enable automatic contributions once per workspace in the Kaname dashboard.
+Evaluations then become agent-generated training candidates without per-example
+approval; they never count as human-reviewed test evidence. See [setup, MCP examples and review/export API](docs/decision-feedback.md).

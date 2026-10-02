@@ -103,7 +103,7 @@ func TestMigrationBackfillsLegacyKeyAccessOnRepeatedRuns(t *testing.T) {
 	if e = s.DB.QueryRow(ctx, `SELECT max(version) FROM schema_version`).Scan(&version); e != nil {
 		t.Fatal(e)
 	}
-	if version != 4 {
-		t.Fatalf("schema version=%d, want 4", version)
+	if version != 5 {
+		t.Fatalf("schema version=%d, want 5", version)
 	}
 }

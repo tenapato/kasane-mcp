@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -119,7 +120,11 @@ func run() error {
 		}
 		decisionToken = strings.TrimRight(string(b), "\r\n")
 	}
-	app, e := server.New(s, q, server.Config{DecisionAPIURL: os.Getenv("DECISION_API_URL"), DecisionAPIToken: decisionToken, MCPPublicURL: os.Getenv("MCP_PUBLIC_URL"), PublicURL: env("PUBLIC_URL", "http://localhost:9090"), WebDir: os.Getenv("WEB_DIR"), TrustedProxyCIDRs: os.Getenv("TRUSTED_PROXY_CIDRS")})
+	feedbackDays, e := strconv.Atoi(env("DECISION_FEEDBACK_RETENTION_DAYS", "0"))
+	if e != nil {
+		return fmt.Errorf("DECISION_FEEDBACK_RETENTION_DAYS must be 0..365")
+	}
+	app, e := server.New(s, q, server.Config{DecisionFeedbackRetentionDays: feedbackDays, DecisionAPIURL: os.Getenv("DECISION_API_URL"), DecisionAPIToken: decisionToken, MCPPublicURL: os.Getenv("MCP_PUBLIC_URL"), PublicURL: env("PUBLIC_URL", "http://localhost:9090"), WebDir: os.Getenv("WEB_DIR"), TrustedProxyCIDRs: os.Getenv("TRUSTED_PROXY_CIDRS")})
 	if e != nil {
 		return e
 	}

@@ -13,9 +13,10 @@ import (
 )
 
 type ruleReference struct {
-	ID       string   `json:"id" jsonschema:"Saved practice ID from this workspace"`
-	Required bool     `json:"required,omitempty" jsonschema:"Always include this convention for this request"`
-	Paths    []string `json:"paths,omitempty" jsonschema:"Repository-relative glob scopes for this request"`
+	ExpectedRevision int64    `json:"expected_revision,omitempty" jsonschema:"Required for training evaluation submissions; exact revision read by the agent"`
+	ID               string   `json:"id" jsonschema:"Saved practice ID from this workspace"`
+	Required         bool     `json:"required,omitempty" jsonschema:"Always include this convention for this request"`
+	Paths            []string `json:"paths,omitempty" jsonschema:"Repository-relative glob scopes for this request"`
 }
 type relevanceInput struct {
 	Task    string          `json:"task"`
@@ -44,6 +45,9 @@ func (a *App) relevance(ctx context.Context, workspace string, in relevanceInput
 		memory, e := a.store.Get(ctx, workspace, ref.ID)
 		if e != nil {
 			return relevanceResult{}, e
+		}
+		if ref.ExpectedRevision > 0 && ref.ExpectedRevision != memory.Revision {
+			return relevanceResult{}, core.ErrConflict
 		}
 		if memory.Kind != "practice" {
 			return relevanceResult{}, fmt.Errorf("%w: candidates must be saved practices", core.ErrInvalid)
