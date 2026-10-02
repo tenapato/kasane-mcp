@@ -134,3 +134,10 @@ For the real Rust baseline test also set `KASANE_TEST_DECISION_URL` and
 `KASANE_TEST_DECISION_TOKEN`; `TestDecisionLiveService` checks required, matching
 scope, keyword and irrelevant cases through the real service. Use a disposable
 database: the suite creates isolated schemas and removes them after each test.
+
+## Training evaluation proposals
+
+For agent-generated relevance labels, opt-in snapshot retention, owner review,
+withdrawal, and exports to Kaname's existing offline trainer, see
+[agent evaluation feedback](decision-feedback.md). Use `kasane_relevance_evaluate`
+with a write key; ordinary `kasane_relevance` remains stateless.

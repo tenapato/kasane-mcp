@@ -23,7 +23,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type Config struct{ PublicURL, MCPPublicURL, WebDir, TrustedProxyCIDRs, DecisionAPIURL, DecisionAPIToken string }
+type Config struct {
+	PublicURL, MCPPublicURL, WebDir, TrustedProxyCIDRs, DecisionAPIURL, DecisionAPIToken string
+	DecisionFeedbackRetentionDays                                                        int
+}
 type App struct {
 	decision     *decision.Client
 	store        *store.Store
@@ -37,6 +40,9 @@ type App struct {
 }
 
 func New(s *store.Store, index *search.Qdrant, cfg Config) (*App, error) {
+	if cfg.DecisionFeedbackRetentionDays < 0 || cfg.DecisionFeedbackRetentionDays > 365 {
+		return nil, fmt.Errorf("DECISION_FEEDBACK_RETENTION_DAYS must be 0..365")
+	}
 	client, err := decision.New(cfg.DecisionAPIURL, cfg.DecisionAPIToken)
 	if err != nil {
 		return nil, err
@@ -197,6 +203,13 @@ func (a *App) Handler() http.Handler {
 	}
 	auth("GET /api/v1/decision/status", a.decisionGlobalStatus)
 	auth("POST /api/v1/decision/check", a.decisionCheck)
+	workspace("GET /api/v1/workspaces/{workspace}/decision/training-policy", a.decisionTrainingPolicy)
+	workspace("POST /api/v1/workspaces/{workspace}/decision/training-policy", a.decisionTrainingPolicy)
+	workspace("GET /api/v1/workspaces/{workspace}/decision/evaluations", a.listDecisionEvaluations)
+	workspace("GET /api/v1/workspaces/{workspace}/decision/permissions", a.decisionPermissions)
+	workspace("POST /api/v1/workspaces/{workspace}/decision/evaluations/{evaluation}/review", a.reviewDecisionEvaluation)
+	workspace("POST /api/v1/workspaces/{workspace}/decision/evaluations/{evaluation}/withdraw", a.withdrawDecisionEvaluation)
+	workspace("GET /api/v1/workspaces/{workspace}/decision/evaluations/{evaluation}/export", a.exportDecisionEvaluation)
 	workspace("GET /api/v1/workspaces/{workspace}/decision/status", a.decisionStatus)
 	workspace("POST /api/v1/workspaces/{workspace}/decision/relevance", a.decisionRelevance)
 	workspace("GET /api/v1/workspaces/{workspace}/map", a.knowledgeMap)
@@ -412,7 +425,14 @@ func (a *App) status(w http.ResponseWriter, r *http.Request) {
 func (a *App) RunWorker(ctx context.Context) {
 	ready := false
 	lastCheck := time.Time{}
+	lastFeedbackPurge := time.Time{}
 	for ctx.Err() == nil {
+		if time.Since(lastFeedbackPurge) > time.Minute {
+			if e := a.store.PurgeDecisionEvaluations(ctx); e != nil && ctx.Err() == nil {
+				slog.Warn("evaluation cleanup temporarily unavailable")
+			}
+			lastFeedbackPurge = time.Now()
+		}
 		if !ready || time.Since(lastCheck) > 30*time.Second {
 			ready = a.index.Ensure(ctx) == nil
 			lastCheck = time.Now()

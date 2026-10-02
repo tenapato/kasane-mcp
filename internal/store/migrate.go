@@ -17,6 +17,9 @@ var invitationsSchema string
 //go:embed usage.sql
 var usageSchema string
 
+//go:embed decision_feedback.sql
+var decisionFeedbackSchema string
+
 func (s *Store) Migrate(ctx context.Context) error {
 	tx, e := s.DB.Begin(ctx)
 	if e != nil {
@@ -78,6 +81,14 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return e
 		}
 		if _, e = tx.Exec(ctx, `INSERT INTO schema_version(version) VALUES(4) ON CONFLICT DO NOTHING`); e != nil {
+			return e
+		}
+	}
+	if version == nil || *version < 5 {
+		if _, e = tx.Exec(ctx, decisionFeedbackSchema); e != nil {
+			return e
+		}
+		if _, e = tx.Exec(ctx, `INSERT INTO schema_version(version) VALUES(5) ON CONFLICT DO NOTHING`); e != nil {
 			return e
 		}
 	}
