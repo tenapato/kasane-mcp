@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -51,6 +53,18 @@ func run() error {
 		defer r.Body.Close()
 		if r.StatusCode != 200 {
 			return fmt.Errorf("health check failed: %d", r.StatusCode)
+		}
+		// A degraded search index keeps the container healthy (PostgreSQL
+		// still serves every request) but is printed so it shows up in
+		// `docker inspect` health logs.
+		var health struct {
+			SearchIndex string `json:"search_index"`
+			Reason      string `json:"reason"`
+		}
+		if json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&health) == nil && health.SearchIndex != "" && health.SearchIndex != "ready" {
+			fmt.Printf("ok; search index %s: %s\n", health.SearchIndex, health.Reason)
+		} else {
+			fmt.Println("ok")
 		}
 		return nil
 	}

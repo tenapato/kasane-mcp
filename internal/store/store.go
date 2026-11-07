@@ -460,18 +460,27 @@ func (s *Store) Profile(ctx context.Context, ws string) ([]core.Memory, error) {
 	}
 	return out, rows.Err()
 }
+
+// reindexLock serializes reindex transactions so concurrent startups or
+// requests queue the same work instead of deadlocking on row locks.
+const reindexLock = 918273646
+
 func (s *Store) Reindex(ctx context.Context, ws string) error {
 	tx, e := s.DB.Begin(ctx)
 	if e != nil {
 		return e
 	}
 	defer tx.Rollback(ctx)
+	if _, e = tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, reindexLock); e != nil {
+		return e
+	}
 	q := `SELECT id::text,revision FROM memories WHERE deleted=false`
 	args := []any{}
 	if ws != "" {
 		q += ` AND workspace_id=$1::uuid`
 		args = append(args, ws)
 	}
+	q += ` ORDER BY id`
 	rows, e := tx.Query(ctx, q, args...)
 	if e != nil {
 		return e
@@ -562,6 +571,13 @@ func (s *Store) ProcessOne(ctx context.Context, apply func(context.Context, core
 }
 func (s *Store) getAnyTx(ctx context.Context, tx pgx.Tx, id string) (core.Memory, error) {
 	return scanMemory(tx.QueryRow(ctx, `SELECT `+memCols+` FROM memories WHERE id=$1::uuid FOR UPDATE`, id))
+}
+
+// IndexCounts returns live memories and how many of them PostgreSQL records
+// as indexed at least once. Each indexed live memory must have a Qdrant point.
+func (s *Store) IndexCounts(ctx context.Context) (live, indexed int, err error) {
+	err = s.DB.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE indexed_revision>0) FROM memories WHERE deleted=false`).Scan(&live, &indexed)
+	return live, indexed, err
 }
 func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	var x Stats

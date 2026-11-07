@@ -31,6 +31,7 @@ type App struct {
 	decision     *decision.Client
 	store        *store.Store
 	index        *search.Qdrant
+	indexHealth  *indexHealth
 	search       *search.Service
 	cfg          Config
 	secure       bool
@@ -66,7 +67,12 @@ func New(s *store.Store, index *search.Qdrant, cfg Config) (*App, error) {
 		}
 	}
 	u, _ := url.Parse(cfg.PublicURL)
-	a := &App{decision: client, store: s, index: index, search: &search.Service{Repo: s, Index: index}, cfg: cfg, secure: u.Scheme == "https", loginLimiter: newLimiter()}
+	health := newIndexHealth()
+	gate := gatedIndex{health: health}
+	if index != nil {
+		gate.index = index
+	}
+	a := &App{decision: client, store: s, index: index, indexHealth: health, search: &search.Service{Repo: s, Index: gate}, cfg: cfg, secure: u.Scheme == "https", loginLimiter: newLimiter()}
 	for _, s := range strings.Split(cfg.TrustedProxyCIDRs, ",") {
 		if s = strings.TrimSpace(s); s != "" {
 			p, e := netip.ParsePrefix(s)
@@ -130,7 +136,13 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { respond(w, 200, map[string]string{"status": "ok"}) })
+	// Liveness stays 200 while search is degraded: the app still serves
+	// PostgreSQL-backed requests, and an unhealthy container would be dropped
+	// by reverse proxies. The search_index field makes degradation visible.
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		st := a.indexHealth.snapshot()
+		respond(w, 200, map[string]string{"status": "ok", "search_index": st.State, "reason": st.Reason})
+	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
@@ -415,11 +427,12 @@ func (a *App) status(w http.ResponseWriter, r *http.Request) {
 		a.failure(w, e)
 		return
 	}
+	index := a.indexHealth.snapshot()
 	state := "ready"
-	if a.index == nil || a.index.Health(r.Context()) != nil {
+	if a.index == nil || !index.Qdrant {
 		state = "unavailable"
 	}
-	respond(w, 200, map[string]any{"postgres": "ready", "qdrant": state, "pending_jobs": stats.PendingJobs, "failed_jobs": stats.FailedJobs, "memory_count": stats.MemoryCount, "mcp_url": a.mcpEndpoint()})
+	respond(w, 200, map[string]any{"postgres": "ready", "qdrant": state, "search_index": index, "pending_jobs": stats.PendingJobs, "failed_jobs": stats.FailedJobs, "memory_count": stats.MemoryCount, "mcp_url": a.mcpEndpoint()})
 }
 
 func (a *App) RunWorker(ctx context.Context) {
@@ -434,7 +447,7 @@ func (a *App) RunWorker(ctx context.Context) {
 			lastFeedbackPurge = time.Now()
 		}
 		if !ready || time.Since(lastCheck) > 30*time.Second {
-			ready = a.index.Ensure(ctx) == nil
+			ready = reconcileIndex(ctx, a.index, a.store, a.indexHealth)
 			lastCheck = time.Now()
 		}
 		worked := false

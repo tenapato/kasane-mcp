@@ -29,6 +29,8 @@ docker compose exec -e KASANE_ADMIN_PASSWORD app \
 
 `/healthz` is public. `/readyz` reports PostgreSQL readiness. Stop the services with `docker compose down`; named Postgres and Qdrant volumes keep data.
 
+Qdrant is a derived index that Kasane rebuilds from PostgreSQL. Kasane keeps serving, with PostgreSQL full-text search fallback, while Qdrant is down. It reports the degraded state in `/api/v1/status` and its logs, and it recreates and reindexes a lost collection automatically. Qdrant restarts are capped so corrupted storage cannot crash-loop. See [`docs/operations.md`](docs/operations.md) for symptoms and recovery.
+
 Create a workspace and an agent key through the API. The key token is returned once, so store it in your secret manager:
 
 ```sh
