@@ -5,8 +5,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # Qdrant is a derived search index. Kasane serves everything from
+      # PostgreSQL (with full-text search fallback) while it is down, so a
+      # broken Qdrant must never block the app from starting.
       qdrant:
         condition: service_started
+        required: false
     healthcheck:
       test: ["CMD", "kasane", "healthcheck"]
       interval: 30s
@@ -46,11 +50,25 @@ services:
       retries: 12
   qdrant:
     image: qdrant/qdrant:v1.19.1
-    restart: "no"
+    # Bounded restarts that still survive reboots: `unless-stopped` brings
+    # Qdrant back after a host restart (`on-failure:N` would not), while the
+    # guard stops starting it after 5 consecutive failed runs instead of
+    # crash-looping on corrupted storage. See docs/operations.md. Kasane keeps
+    # working from PostgreSQL while Qdrant is down.
+    restart: unless-stopped
+    entrypoint: ["bash", "/kasane/qdrant-guard.sh"]
+    healthcheck:
+      # The image has no curl/wget; use bash's /dev/tcp. /readyz needs no API key.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && IFS= read -r status <&3 && [[ $$status == *' 200 '* ]]"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     environment:
       QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
     volumes:
       - ${QDRANT_STORAGE:-qdrant-data}:/qdrant/storage
+      - ./deploy/qdrant-guard.sh:/kasane/qdrant-guard.sh:ro
 
 volumes:
   postgres-data:

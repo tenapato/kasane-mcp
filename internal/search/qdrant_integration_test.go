@@ -14,7 +14,7 @@ func TestQdrantIntegration(t *testing.T) {
 	}
 	q := NewQdrant(url, "")
 	ctx := context.Background()
-	if err := q.Ensure(ctx); err != nil {
+	if _, err := q.Ensure(ctx); err != nil {
 		t.Fatal(err)
 	}
 	m := core.Memory{ID: core.UUID(), WorkspaceID: core.UUID(), Title: "Docker deployment", Content: "Deploy applications using Docker Compose and PostgreSQL.", Tags: []string{"docker"}, Kind: "stack", Revision: 1}

@@ -202,3 +202,52 @@ func TestMoveEnforcesTargetProfileLimit(t *testing.T) {
 		t.Fatalf("failed move changed source memory: %v", e)
 	}
 }
+
+func TestIndexCountsAndConcurrentFullReindex(t *testing.T) {
+	s := testStore(t)
+	c := context.Background()
+	w, e := s.CreateWorkspace(c, "w")
+	if e != nil {
+		t.Fatal(e)
+	}
+	for i := 0; i < 5; i++ {
+		if _, e = s.Remember(c, w.ID, core.RememberInput{Title: fmt.Sprint("m", i), Content: "y"}); e != nil {
+			t.Fatal(e)
+		}
+	}
+	for {
+		ok, e := s.ProcessOne(c, func(context.Context, core.Memory) error { return nil })
+		if e != nil {
+			t.Fatal(e)
+		}
+		if !ok {
+			break
+		}
+	}
+	live, indexed, e := s.IndexCounts(c)
+	if e != nil || live != 5 || indexed != 5 {
+		t.Fatalf("counts after indexing: %d %d %v", live, indexed, e)
+	}
+	// Concurrent startups may both detect a lost index; reindexing must not deadlock.
+	var g sync.WaitGroup
+	errs := make(chan error, 4)
+	for i := 0; i < 4; i++ {
+		g.Add(1)
+		go func() { defer g.Done(); errs <- s.Reindex(c, "") }()
+	}
+	g.Wait()
+	close(errs)
+	for e := range errs {
+		if e != nil {
+			t.Fatal(e)
+		}
+	}
+	live, indexed, e = s.IndexCounts(c)
+	if e != nil || live != 5 || indexed != 0 {
+		t.Fatalf("counts after reindex: %d %d %v", live, indexed, e)
+	}
+	stats, e := s.Stats(c)
+	if e != nil || stats.PendingJobs != 5 {
+		t.Fatalf("expected 5 queued jobs, got %+v %v", stats, e)
+	}
+}

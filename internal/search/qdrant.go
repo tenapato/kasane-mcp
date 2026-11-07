@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,22 @@ import (
 )
 
 const collection = "kasane_memories_v1"
+
+// Collection is the Qdrant collection derived from PostgreSQL memories.
+const Collection = collection
+
+var (
+	// ErrUnreachable means Qdrant could not be contacted at all.
+	ErrUnreachable = errors.New("vector service unavailable")
+	// ErrIncompatible means the collection exists with a configuration Kasane
+	// cannot use. Kasane never deletes it automatically.
+	ErrIncompatible = errors.New("incompatible vector collection: keywords IDF index required")
+)
+
+// HTTPError reports a non-2xx Qdrant response.
+type HTTPError struct{ Status int }
+
+func (e *HTTPError) Error() string { return fmt.Sprintf("vector service HTTP %d", e.Status) }
 
 type Qdrant struct {
 	URL, Key string
@@ -43,12 +60,12 @@ func (q *Qdrant) request(ctx context.Context, method, path string, body any, out
 	}
 	res, err := q.Client.Do(req)
 	if err != nil {
-		return fmt.Errorf("vector service unavailable: %w", err)
+		return fmt.Errorf("%w: %w", ErrUnreachable, err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
-		return fmt.Errorf("vector service HTTP %d", res.StatusCode)
+		return &HTTPError{res.StatusCode}
 	}
 	if out != nil {
 		return json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(out)
@@ -73,25 +90,49 @@ func (q *Qdrant) Health(ctx context.Context) error {
 		return err
 	}
 	if out.Result.Config.Params.Sparse["keywords"].Modifier != "idf" {
-		return fmt.Errorf("incompatible vector collection: keywords IDF index required")
+		return ErrIncompatible
 	}
 	return nil
 }
-func (q *Qdrant) Ensure(ctx context.Context) error {
-	if err := q.Health(ctx); err != nil {
+
+// Ensure creates the collection and payload indexes when missing. created
+// reports whether this call created the collection. Concurrent callers are
+// safe: a losing PUT is ignored once the collection is healthy. An
+// incompatible collection is reported, never replaced.
+func (q *Qdrant) Ensure(ctx context.Context) (created bool, err error) {
+	if err = q.Health(ctx); err != nil {
+		if errors.Is(err, ErrIncompatible) || errors.Is(err, ErrUnreachable) {
+			return false, err
+		}
 		err = q.request(ctx, "PUT", "/collections/"+collection, map[string]any{"sparse_vectors": map[string]any{"keywords": map[string]any{"modifier": "idf"}}}, nil)
-		if err != nil {
-			if q.Health(ctx) != nil {
-				return err
+		if err == nil {
+			created = true
+		} else if herr := q.Health(ctx); herr != nil {
+			if errors.Is(herr, ErrIncompatible) {
+				return false, herr
 			}
+			return false, err
 		}
 	}
 	for _, field := range []string{"workspace_id", "kind", "tags"} {
 		if err := q.request(ctx, "PUT", "/collections/"+collection+"/index?wait=true", map[string]any{"field_name": field, "field_schema": "keyword"}, nil); err != nil {
-			return err
+			return created, err
 		}
 	}
-	return nil
+	return created, nil
+}
+
+// Count returns the exact number of points in the collection.
+func (q *Qdrant) Count(ctx context.Context) (int, error) {
+	var out struct {
+		Result struct {
+			Count int `json:"count"`
+		} `json:"result"`
+	}
+	if err := q.request(ctx, "POST", "/collections/"+collection+"/points/count", map[string]any{"exact": true}, &out); err != nil {
+		return 0, err
+	}
+	return out.Result.Count, nil
 }
 
 // BM25 is a statistical keyword algorithm, not a neural model or provider call.

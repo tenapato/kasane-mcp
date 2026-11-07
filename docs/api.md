@@ -43,11 +43,11 @@ A memory includes `id`, `workspace_id`, `kind`, `title`, `content`, `tags`, `sou
 
 List results report the total matching database count. Ranked Qdrant search results report the number of returned hits in `total`; use `limit` and `offset` for bounded pagination. No semantic model or AI provider is used. Newly written entries may remain `pending` until the worker indexes them; listing and direct reads are immediate.
 
-`POST /api/v1/workspaces/{workspace}/reindex` queues live memories for indexing. `GET /api/v1/status` returns PostgreSQL and Qdrant state, queue counts, memory count, and `mcp_url`.
+`POST /api/v1/workspaces/{workspace}/reindex` queues live memories for indexing. `GET /api/v1/status` returns PostgreSQL and Qdrant state, queue counts, memory count, `mcp_url`, and `search_index: { "state": "ready" | "degraded", "reason": string, "message": string, "since": string }`. While the index is degraded (Qdrant unavailable, or a rebuild from PostgreSQL in progress), searches use PostgreSQL full-text search and report `"degraded": true`. Kasane recreates a missing collection and queues a full rebuild when Qdrant has fewer points than PostgreSQL has indexed memories. Reasons are listed in [`operations.md`](operations.md).
 
 ## Health
 
-`GET /healthz` is public and returns `{ "status": "ok" }`. `GET /readyz` checks PostgreSQL and returns 503 while it is unavailable. The container healthcheck calls `kasane healthcheck`, which checks `/healthz` on `LISTEN_ADDR`.
+`GET /healthz` is public and returns `{ "status": "ok", "search_index": "ready" | "degraded", "reason": string }`. It stays 200 while search is degraded, because the service still works from PostgreSQL. `GET /readyz` checks PostgreSQL and returns 503 while it is unavailable. The container healthcheck calls `kasane healthcheck`, which checks `/healthz` on `LISTEN_ADDR` and prints any degraded search state into the Docker health log.
 
 ## MCP
 
